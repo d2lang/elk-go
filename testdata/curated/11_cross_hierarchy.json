@@ -1,0 +1,46 @@
+{
+  "id": "root",
+  "layoutOptions": {
+    "elk.algorithm": "layered",
+    "elk.direction": "DOWN",
+    "elk.hierarchyHandling": "INCLUDE_CHILDREN"
+  },
+  "children": [
+    {
+      "id": "source_group",
+      "width": 170,
+      "height": 120,
+      "layoutOptions": {
+        "elk.direction": "DOWN"
+      },
+      "children": [
+        { "id": "source_group.one", "width": 70, "height": 40 },
+        { "id": "source_group.two", "width": 70, "height": 40 }
+      ]
+    },
+    {
+      "id": "target_group",
+      "width": 170,
+      "height": 120,
+      "layoutOptions": {
+        "elk.direction": "DOWN"
+      },
+      "children": [
+        { "id": "target_group.one", "width": 70, "height": 40 },
+        { "id": "target_group.two", "width": 70, "height": 40 }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "cross-one",
+      "sources": ["source_group.one"],
+      "targets": ["target_group.two"]
+    },
+    {
+      "id": "cross-two",
+      "sources": ["source_group.two"],
+      "targets": ["target_group.one"]
+    }
+  ]
+}

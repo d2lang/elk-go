@@ -1,0 +1,30 @@
+{
+  "id": "root",
+  "layoutOptions": {
+    "elk.algorithm": "layered",
+    "elk.direction": "DOWN",
+    "elk.hierarchyHandling": "INCLUDE_CHILDREN"
+  },
+  "children": [
+    {
+      "id": "cluster",
+      "width": 180,
+      "height": 120,
+      "layoutOptions": {
+        "elk.direction": "RIGHT",
+        "elk.padding": "[top=30,left=30,bottom=30,right=30]"
+      },
+      "children": [
+        { "id": "cluster.a", "width": 55, "height": 35 },
+        { "id": "cluster.b", "width": 65, "height": 40 }
+      ],
+      "edges": [
+        { "id": "inside", "sources": ["cluster.a"], "targets": ["cluster.b"] }
+      ]
+    },
+    { "id": "outside", "width": 90, "height": 50 }
+  ],
+  "edges": [
+    { "id": "cluster-outside", "sources": ["cluster"], "targets": ["outside"] }
+  ]
+}

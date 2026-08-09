@@ -1,0 +1,16 @@
+{
+  "id": "root",
+  "layoutOptions": {
+    "elk.algorithm": "layered",
+    "elk.direction": "DOWN"
+  },
+  "children": [
+    { "id": "a", "width": 80, "height": 40 },
+    { "id": "b", "width": 60, "height": 35 },
+    { "id": "c", "width": 70, "height": 45 }
+  ],
+  "edges": [
+    { "id": "ab", "sources": ["a"], "targets": ["b"] },
+    { "id": "bc", "sources": ["b"], "targets": ["c"] }
+  ]
+}

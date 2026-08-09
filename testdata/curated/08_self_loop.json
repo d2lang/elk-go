@@ -1,0 +1,23 @@
+{
+  "id": "root",
+  "layoutOptions": {
+    "elk.algorithm": "layered",
+    "elk.direction": "DOWN",
+    "elk.spacing.nodeSelfLoop": 50
+  },
+  "children": [
+    {
+      "id": "state",
+      "width": 100,
+      "height": 65,
+      "layoutOptions": {
+        "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY"
+      }
+    },
+    { "id": "next", "width": 80, "height": 50 }
+  ],
+  "edges": [
+    { "id": "retry", "sources": ["state"], "targets": ["state"] },
+    { "id": "advance", "sources": ["state"], "targets": ["next"] }
+  ]
+}

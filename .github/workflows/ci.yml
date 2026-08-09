@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ["1.23.x", "1.25.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+      - run: go test ./...
+      - run: go test -race ./...
+      - run: go vet ./...
+
+  frozen-oracle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+      - name: Download the pinned ELK.js 0.8.2 oracle
+        run: |
+          curl --fail --location --silent --show-error \
+            https://raw.githubusercontent.com/kieler/elkjs/0.8.2/lib/elk.bundled.js \
+            --output "$RUNNER_TEMP/elk.bundled.js"
+          echo "cd56bf0ddb7ad2587583461d523fdd974dc56b59efd20cdfee954e1112ff1a49  $RUNNER_TEMP/elk.bundled.js" | sha256sum --check
+      - name: Run frozen-oracle differentials
+        env:
+          ELKJS_ORACLE_ASSET: ${{ runner.temp }}/elk.bundled.js
+          ELK_GO_ORACLE_ALGORITHMS: "1"
+          ELK_GO_ORACLE_BASIC: "1"
+          ELK_GO_ORACLE_CODEC: "1"
+          ELK_GO_ORACLE_LAYERED_STRATEGIES: "1"
+          ELK_GO_ORACLE_LAYERED_STRATEGY_RANDOM: "5"
+          ELK_GO_ORACLE_OPTIONS: "1"
+          ELK_GO_ORACLE_PARITY: "1"
+          ELK_GO_ORACLE_RANDOM: "100"
+          ELK_GO_ORACLE_RANDOM_GENERIC: "100"
+        run: |
+          go test ./...
+          go test -tags audit ./internal/layeredlayout
