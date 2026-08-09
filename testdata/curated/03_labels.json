@@ -1,0 +1,40 @@
+{
+  "id": "root",
+  "layoutOptions": {
+    "elk.algorithm": "layered",
+    "elk.direction": "RIGHT"
+  },
+  "children": [
+    {
+      "id": "producer",
+      "width": 130,
+      "height": 70,
+      "labels": [
+        { "text": "Producer", "width": 72, "height": 20 }
+      ]
+    },
+    {
+      "id": "consumer",
+      "width": 120,
+      "height": 65,
+      "labels": [
+        { "text": "Consumer", "width": 76, "height": 20 }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "events",
+      "sources": ["producer"],
+      "targets": ["consumer"],
+      "labels": [
+        {
+          "text": "events",
+          "width": 44,
+          "height": 16,
+          "layoutOptions": { "elk.edgeLabels.inline": true }
+        }
+      ]
+    }
+  ]
+}

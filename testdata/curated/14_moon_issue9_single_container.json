@@ -1,0 +1,214 @@
+{
+  "id": "",
+  "layoutOptions": {
+    "elk.algorithm": "layered",
+    "elk.direction": "DOWN",
+    "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+    "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+    "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+    "elk.layered.cycleBreaking.strategy": "GREEDY_MODEL_ORDER",
+    "elk.layered.thoroughness": 8,
+    "elk.layered.spacing.edgeEdgeBetweenLayers": 50,
+    "elk.spacing.edgeNode": 40,
+    "elk.nodeSize.constraints": "MINIMUM_SIZE",
+    "elk.contentAlignment": "H_CENTER V_CENTER",
+    "spacing.nodeNodeBetweenLayers": 70,
+    "spacing.edgeNodeBetweenLayers": 40,
+    "elk.spacing.nodeSelfLoop": 50
+  },
+  "children": [
+    {
+      "id": "grid.cell 3",
+      "x": 0,
+      "y": 0,
+      "width": 95,
+      "height": 76,
+      "labels": [
+        {
+          "text": "cell 3",
+          "x": 0,
+          "y": 0,
+          "width": 50,
+          "height": 31
+        }
+      ],
+      "layoutOptions": {
+        "elk.direction": "",
+        "elk.layered.crossingMinimization.forceNodeModelOrder": true,
+        "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+        "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+        "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+        "elk.layered.cycleBreaking.strategy": "GREEDY_MODEL_ORDER",
+        "elk.layered.thoroughness": 8,
+        "elk.layered.spacing.edgeEdgeBetweenLayers": 50,
+        "elk.spacing.edgeNode": 40,
+        "spacing.nodeNodeBetweenLayers": 70,
+        "spacing.edgeNodeBetweenLayers": 40,
+        "elk.spacing.nodeSelfLoop": 50,
+        "elk.nodeSize.constraints": "MINIMUM_SIZE",
+        "elk.nodeSize.minimum": "(76, 95)",
+        "elk.contentAlignment": "H_CENTER V_CENTER",
+        "elk.padding": "[top=50,left=50,bottom=50,right=50]"
+      },
+      "children": [
+        {
+          "id": "grid.cell 3.c",
+          "x": 0,
+          "y": 0,
+          "width": 54,
+          "height": 71,
+          "labels": [
+            {
+              "text": "c",
+              "x": 0,
+              "y": 0,
+              "width": 9,
+              "height": 26
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.crossingMinimization.forceNodeModelOrder": true,
+            "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+            "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+            "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+            "elk.layered.cycleBreaking.strategy": "GREEDY_MODEL_ORDER",
+            "elk.layered.thoroughness": 8,
+            "elk.layered.spacing.edgeEdgeBetweenLayers": 50,
+            "elk.spacing.edgeNode": 40,
+            "spacing.nodeNodeBetweenLayers": 70,
+            "spacing.edgeNodeBetweenLayers": 40,
+            "elk.spacing.nodeSelfLoop": 50,
+            "elk.nodeSize.constraints": "MINIMUM_SIZE",
+            "elk.nodeSize.minimum": "(71, 54)",
+            "elk.contentAlignment": "H_CENTER V_CENTER",
+            "elk.padding": "[top=50,left=50,bottom=50,right=50]"
+          },
+          "children": [
+            {
+              "id": "grid.cell 3.c.d",
+              "x": 0,
+              "y": 0,
+              "width": 54,
+              "height": 66,
+              "labels": [
+                {
+                  "text": "d",
+                  "x": 0,
+                  "y": 0,
+                  "width": 9,
+                  "height": 21
+                }
+              ],
+              "layoutOptions": {
+                "elk.direction": "",
+                "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+                "elk.spacing.nodeSelfLoop": 0
+              }
+            }
+          ]
+        },
+        {
+          "id": "grid.cell 3.e",
+          "x": 0,
+          "y": 0,
+          "width": 53,
+          "height": 66,
+          "labels": [
+            {
+              "text": "e",
+              "x": 0,
+              "y": 0,
+              "width": 8,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        },
+        {
+          "id": "grid.cell 3.f",
+          "x": 0,
+          "y": 0,
+          "width": 52,
+          "height": 71,
+          "labels": [
+            {
+              "text": "f",
+              "x": 0,
+              "y": 0,
+              "width": 7,
+              "height": 26
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.crossingMinimization.forceNodeModelOrder": true,
+            "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+            "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+            "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+            "elk.layered.cycleBreaking.strategy": "GREEDY_MODEL_ORDER",
+            "elk.layered.thoroughness": 8,
+            "elk.layered.spacing.edgeEdgeBetweenLayers": 50,
+            "elk.spacing.edgeNode": 40,
+            "spacing.nodeNodeBetweenLayers": 70,
+            "spacing.edgeNodeBetweenLayers": 40,
+            "elk.spacing.nodeSelfLoop": 50,
+            "elk.nodeSize.constraints": "MINIMUM_SIZE",
+            "elk.nodeSize.minimum": "(71, 52)",
+            "elk.contentAlignment": "H_CENTER V_CENTER",
+            "elk.padding": "[top=50,left=50,bottom=50,right=50]"
+          },
+          "children": [
+            {
+              "id": "grid.cell 3.f.g",
+              "x": 0,
+              "y": 0,
+              "width": 54,
+              "height": 66,
+              "labels": [
+                {
+                  "text": "g",
+                  "x": 0,
+                  "y": 0,
+                  "width": 9,
+                  "height": 21
+                }
+              ],
+              "layoutOptions": {
+                "elk.direction": "",
+                "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+                "elk.spacing.nodeSelfLoop": 0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "grid.cell 3.(c -> e)[0]",
+      "sources": [
+        "grid.cell 3.c"
+      ],
+      "targets": [
+        "grid.cell 3.e"
+      ],
+      "container": ""
+    },
+    {
+      "id": "grid.cell 3.(c.d -> f.g)[0]",
+      "sources": [
+        "grid.cell 3.c.d"
+      ],
+      "targets": [
+        "grid.cell 3.f.g"
+      ],
+      "container": ""
+    }
+  ]
+}

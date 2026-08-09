@@ -1,0 +1,545 @@
+{
+  "id": "",
+  "layoutOptions": {
+    "elk.algorithm": "layered",
+    "elk.direction": "DOWN",
+    "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+    "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+    "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+    "elk.layered.cycleBreaking.strategy": "GREEDY_MODEL_ORDER",
+    "elk.layered.thoroughness": 8,
+    "elk.layered.spacing.edgeEdgeBetweenLayers": 50,
+    "elk.spacing.edgeNode": 40,
+    "elk.nodeSize.constraints": "MINIMUM_SIZE",
+    "elk.contentAlignment": "H_CENTER V_CENTER",
+    "spacing.nodeNodeBetweenLayers": 70,
+    "spacing.edgeNodeBetweenLayers": 40,
+    "elk.spacing.nodeSelfLoop": 50
+  },
+  "children": [
+    {
+      "id": "moonbit_source",
+      "x": 0,
+      "y": 0,
+      "width": 229,
+      "height": 81,
+      "labels": [
+        {
+          "text": "MoonBit Source",
+          "x": 0,
+          "y": 0,
+          "width": 184,
+          "height": 36
+        }
+      ],
+      "layoutOptions": {
+        "elk.direction": "",
+        "elk.layered.crossingMinimization.forceNodeModelOrder": true,
+        "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+        "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+        "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+        "elk.layered.cycleBreaking.strategy": "GREEDY_MODEL_ORDER",
+        "elk.layered.thoroughness": 8,
+        "elk.layered.spacing.edgeEdgeBetweenLayers": 50,
+        "elk.spacing.edgeNode": 40,
+        "spacing.nodeNodeBetweenLayers": 70,
+        "spacing.edgeNodeBetweenLayers": 40,
+        "elk.spacing.nodeSelfLoop": 50,
+        "elk.nodeSize.constraints": "MINIMUM_SIZE",
+        "elk.nodeSize.minimum": "(81, 229)",
+        "elk.contentAlignment": "H_CENTER V_CENTER",
+        "elk.padding": "[top=50,left=50,bottom=50,right=50]"
+      },
+      "children": [
+        {
+          "id": "moonbit_source.shared",
+          "x": 0,
+          "y": 0,
+          "width": 120,
+          "height": 66,
+          "labels": [
+            {
+              "text": "shared",
+              "x": 0,
+              "y": 0,
+              "width": 49,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        },
+        {
+          "id": "moonbit_source.frontend",
+          "x": 0,
+          "y": 0,
+          "width": 108,
+          "height": 66,
+          "labels": [
+            {
+              "text": "frontend",
+              "x": 0,
+              "y": 0,
+              "width": 63,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        },
+        {
+          "id": "moonbit_source.backend",
+          "x": 0,
+          "y": 0,
+          "width": 163,
+          "height": 66,
+          "labels": [
+            {
+              "text": "backend (native)",
+              "x": 0,
+              "y": 0,
+              "width": 118,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        },
+        {
+          "id": "moonbit_source.cli",
+          "x": 0,
+          "y": 0,
+          "width": 120,
+          "height": 66,
+          "labels": [
+            {
+              "text": "cli (native)",
+              "x": 0,
+              "y": 0,
+              "width": 75,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "compiled_output",
+      "x": 0,
+      "y": 0,
+      "width": 248,
+      "height": 81,
+      "labels": [
+        {
+          "text": "Compiled Output",
+          "x": 0,
+          "y": 0,
+          "width": 203,
+          "height": 36
+        }
+      ],
+      "layoutOptions": {
+        "elk.direction": "",
+        "elk.layered.crossingMinimization.forceNodeModelOrder": true,
+        "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+        "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+        "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+        "elk.layered.cycleBreaking.strategy": "GREEDY_MODEL_ORDER",
+        "elk.layered.thoroughness": 8,
+        "elk.layered.spacing.edgeEdgeBetweenLayers": 50,
+        "elk.spacing.edgeNode": 40,
+        "spacing.nodeNodeBetweenLayers": 70,
+        "spacing.edgeNodeBetweenLayers": 40,
+        "elk.spacing.nodeSelfLoop": 50,
+        "elk.nodeSize.constraints": "MINIMUM_SIZE",
+        "elk.nodeSize.minimum": "(81, 248)",
+        "elk.contentAlignment": "H_CENTER V_CENTER",
+        "elk.padding": "[top=50,left=50,bottom=50,right=50]"
+      },
+      "children": [
+        {
+          "id": "compiled_output.js_bundle",
+          "x": 0,
+          "y": 0,
+          "width": 124,
+          "height": 66,
+          "labels": [
+            {
+              "text": "frontend.js",
+              "x": 0,
+              "y": 0,
+              "width": 79,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        },
+        {
+          "id": "compiled_output.server_bin",
+          "x": 0,
+          "y": 0,
+          "width": 205,
+          "height": 66,
+          "labels": [
+            {
+              "text": "taskflow server binary",
+              "x": 0,
+              "y": 0,
+              "width": 160,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        },
+        {
+          "id": "compiled_output.cli_bin",
+          "x": 0,
+          "y": 0,
+          "width": 166,
+          "height": 66,
+          "labels": [
+            {
+              "text": "test client binary",
+              "x": 0,
+              "y": 0,
+              "width": 121,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime",
+      "x": 0,
+      "y": 0,
+      "width": 143,
+      "height": 81,
+      "labels": [
+        {
+          "text": "Runtime",
+          "x": 0,
+          "y": 0,
+          "width": 98,
+          "height": 36
+        }
+      ],
+      "layoutOptions": {
+        "elk.direction": "",
+        "elk.layered.crossingMinimization.forceNodeModelOrder": true,
+        "elk.hierarchyHandling": "INCLUDE_CHILDREN",
+        "elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
+        "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+        "elk.layered.cycleBreaking.strategy": "GREEDY_MODEL_ORDER",
+        "elk.layered.thoroughness": 8,
+        "elk.layered.spacing.edgeEdgeBetweenLayers": 50,
+        "elk.spacing.edgeNode": 40,
+        "spacing.nodeNodeBetweenLayers": 70,
+        "spacing.edgeNodeBetweenLayers": 40,
+        "elk.spacing.nodeSelfLoop": 50,
+        "elk.nodeSize.constraints": "MINIMUM_SIZE",
+        "elk.nodeSize.minimum": "(81, 143)",
+        "elk.contentAlignment": "H_CENTER V_CENTER",
+        "elk.padding": "[top=50,left=50,bottom=50,right=50]"
+      },
+      "children": [
+        {
+          "id": "runtime.browser",
+          "x": 0,
+          "y": 0,
+          "width": 104,
+          "height": 66,
+          "labels": [
+            {
+              "text": "Browser",
+              "x": 0,
+              "y": 0,
+              "width": 59,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        },
+        {
+          "id": "runtime.server",
+          "x": 0,
+          "y": 0,
+          "width": 174,
+          "height": 66,
+          "labels": [
+            {
+              "text": "HTTP Server :4006",
+              "x": 0,
+              "y": 0,
+              "width": 129,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        },
+        {
+          "id": "runtime.db",
+          "x": 0,
+          "y": 0,
+          "width": 180,
+          "height": 66,
+          "labels": [
+            {
+              "text": "SQLite taskflow.db",
+              "x": 0,
+              "y": 0,
+              "width": 135,
+              "height": 21
+            }
+          ],
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.layered.edgeRouting.selfLoopDistribution": "EQUALLY",
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "moonbit_source.(shared -> frontend)[0]",
+      "sources": [
+        "moonbit_source.shared"
+      ],
+      "targets": [
+        "moonbit_source.frontend"
+      ],
+      "container": ""
+    },
+    {
+      "id": "moonbit_source.(shared -> backend)[0]",
+      "sources": [
+        "moonbit_source.shared"
+      ],
+      "targets": [
+        "moonbit_source.backend"
+      ],
+      "container": ""
+    },
+    {
+      "id": "moonbit_source.(shared -> cli)[0]",
+      "sources": [
+        "moonbit_source.shared"
+      ],
+      "targets": [
+        "moonbit_source.cli"
+      ],
+      "container": ""
+    },
+    {
+      "id": "(moonbit_source.frontend -> compiled_output.js_bundle)[0]",
+      "sources": [
+        "moonbit_source.frontend"
+      ],
+      "targets": [
+        "compiled_output.js_bundle"
+      ],
+      "container": "",
+      "labels": [
+        {
+          "text": "moon build --target js",
+          "x": 0,
+          "y": 0,
+          "width": 142,
+          "height": 21,
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.edgeLabels.inline": true,
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "(moonbit_source.backend -> compiled_output.server_bin)[0]",
+      "sources": [
+        "moonbit_source.backend"
+      ],
+      "targets": [
+        "compiled_output.server_bin"
+      ],
+      "container": "",
+      "labels": [
+        {
+          "text": "moon build --target native",
+          "x": 0,
+          "y": 0,
+          "width": 173,
+          "height": 21,
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.edgeLabels.inline": true,
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "(moonbit_source.cli -> compiled_output.cli_bin)[0]",
+      "sources": [
+        "moonbit_source.cli"
+      ],
+      "targets": [
+        "compiled_output.cli_bin"
+      ],
+      "container": "",
+      "labels": [
+        {
+          "text": "moon build --target native",
+          "x": 0,
+          "y": 0,
+          "width": 173,
+          "height": 21,
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.edgeLabels.inline": true,
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "(compiled_output.server_bin -> runtime.server)[0]",
+      "sources": [
+        "compiled_output.server_bin"
+      ],
+      "targets": [
+        "runtime.server"
+      ],
+      "container": ""
+    },
+    {
+      "id": "(runtime.server -> compiled_output.js_bundle)[0]",
+      "sources": [
+        "runtime.server"
+      ],
+      "targets": [
+        "compiled_output.js_bundle"
+      ],
+      "container": "",
+      "labels": [
+        {
+          "text": "serves",
+          "x": 0,
+          "y": 0,
+          "width": 43,
+          "height": 21,
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.edgeLabels.inline": true,
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "(compiled_output.js_bundle -> runtime.browser)[0]",
+      "sources": [
+        "compiled_output.js_bundle"
+      ],
+      "targets": [
+        "runtime.browser"
+      ],
+      "container": ""
+    },
+    {
+      "id": "runtime.(browser <-> server)[0]",
+      "sources": [
+        "runtime.browser"
+      ],
+      "targets": [
+        "runtime.server"
+      ],
+      "container": "",
+      "labels": [
+        {
+          "text": "JSON REST API",
+          "x": 0,
+          "y": 0,
+          "width": 97,
+          "height": 21,
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.edgeLabels.inline": true,
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "runtime.(server <-> db)[0]",
+      "sources": [
+        "runtime.server"
+      ],
+      "targets": [
+        "runtime.db"
+      ],
+      "container": ""
+    },
+    {
+      "id": "(compiled_output.cli_bin -> runtime.server)[0]",
+      "sources": [
+        "compiled_output.cli_bin"
+      ],
+      "targets": [
+        "runtime.server"
+      ],
+      "container": "",
+      "labels": [
+        {
+          "text": "HTTP requests",
+          "x": 0,
+          "y": 0,
+          "width": 95,
+          "height": 21,
+          "layoutOptions": {
+            "elk.direction": "",
+            "elk.edgeLabels.inline": true,
+            "elk.spacing.nodeSelfLoop": 0
+          }
+        }
+      ]
+    }
+  ]
+}

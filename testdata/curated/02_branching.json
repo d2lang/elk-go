@@ -1,0 +1,23 @@
+{
+  "id": "root",
+  "layoutOptions": {
+    "elk.algorithm": "layered",
+    "elk.direction": "DOWN",
+    "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES"
+  },
+  "children": [
+    { "id": "source", "width": 90, "height": 45 },
+    { "id": "left", "width": 55, "height": 35 },
+    { "id": "middle", "width": 75, "height": 35 },
+    { "id": "right", "width": 60, "height": 35 },
+    { "id": "sink", "width": 90, "height": 45 }
+  ],
+  "edges": [
+    { "id": "source-left", "sources": ["source"], "targets": ["left"] },
+    { "id": "source-middle", "sources": ["source"], "targets": ["middle"] },
+    { "id": "source-right", "sources": ["source"], "targets": ["right"] },
+    { "id": "left-sink", "sources": ["left"], "targets": ["sink"] },
+    { "id": "middle-sink", "sources": ["middle"], "targets": ["sink"] },
+    { "id": "right-sink", "sources": ["right"], "targets": ["sink"] }
+  ]
+}
