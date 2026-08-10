@@ -15,7 +15,7 @@ import (
 	"github.com/d2lang/elk-go/internal/core"
 )
 
-func TestFrozenELKJS082AlgorithmRegistry(t *testing.T) {
+func TestELKJS0120AlgorithmRegistry(t *testing.T) {
 	options := core.NewOptionRegistry()
 	RegisterOptions(options)
 	algorithms := core.NewAlgorithmRegistry()
@@ -35,7 +35,6 @@ func TestFrozenELKJS082AlgorithmRegistry(t *testing.T) {
 		"org.eclipse.elk.mrtree",
 		"org.eclipse.elk.radial",
 		"org.eclipse.elk.force",
-		"org.eclipse.elk.disco",
 		"org.eclipse.elk.sporeOverlap",
 		"org.eclipse.elk.sporeCompaction",
 		"org.eclipse.elk.rectpacking",

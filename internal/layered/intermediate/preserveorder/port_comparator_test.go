@@ -13,7 +13,7 @@ import (
 	"github.com/d2lang/elk-go/internal/layered"
 )
 
-func TestPortComparatorIncomingPortsUseReversePreviousLayerOrder(t *testing.T) {
+func TestPortComparatorIncomingPortsUsePreviousLayerOrder(t *testing.T) {
 	arena := layered.NewLGraphArena()
 	graphID := arena.AddGraph()
 	sourceA := arena.AddNode(graphID)
@@ -22,14 +22,15 @@ func TestPortComparatorIncomingPortsUseReversePreviousLayerOrder(t *testing.T) {
 	_, incomingA := connectPorts(arena, sourceA, target, 1)
 	_, incomingB := connectPorts(arena, sourceB, target, 2)
 	ports := []layered.LPortID{incomingA, incomingB}
-	comparator := NewPortComparator(arena, []layered.LNodeID{sourceA, sourceB}, nil)
+	comparator := NewPortComparator(
+		arena, []layered.LNodeID{sourceA, sourceB}, layered.OrderingNodesAndEdges, nil, false)
 	slices.SortStableFunc(ports, comparator.Compare)
-	if want := []layered.LPortID{incomingB, incomingA}; !reflect.DeepEqual(ports, want) {
+	if want := []layered.LPortID{incomingA, incomingB}; !reflect.DeepEqual(ports, want) {
 		t.Fatalf("incoming port order = %v, want %v", ports, want)
 	}
 }
 
-func TestPortComparatorPreservesSameTargetOrderBug(t *testing.T) {
+func TestPortComparatorUsesBothSameTargetEdgeOrders(t *testing.T) {
 	arena := layered.NewLGraphArena()
 	graphID := arena.AddGraph()
 	source := arena.AddNode(graphID)
@@ -38,13 +39,33 @@ func TestPortComparatorPreservesSameTargetOrderBug(t *testing.T) {
 	second, _ := connectPorts(arena, source, target, 2)
 	basegraph.Set(&arena.Port(first).Properties, layered.LongEdgeTargetNode, target)
 	basegraph.Set(&arena.Port(second).Properties, layered.LongEdgeTargetNode, target)
-	comparator := NewPortComparator(arena, nil, map[layered.LNodeID]int{target: 2})
-	if got := comparator.Compare(first, second); got != 0 {
-		t.Fatalf("same-target comparison = %d, want 0 from ELK 0.8.1 p1-order reuse", got)
-	}
-	basegraph.Set(&arena.Edge(arena.Port(first).OutgoingEdges[0]).Properties, layered.Reversed, true)
+	comparator := NewPortComparator(
+		arena, nil, layered.OrderingNodesAndEdges, map[layered.LNodeID]int{target: 2}, false)
 	if got := comparator.Compare(first, second); got != 1 {
-		t.Fatalf("reversed edge comparison = %d, want 1", got)
+		t.Fatalf("same-target comparison = %d, want 1", got)
+	}
+	comparator.ClearTransitiveOrdering()
+	if got := comparator.Compare(second, first); got != -1 {
+		t.Fatalf("reverse same-target comparison = %d, want -1", got)
+	}
+}
+
+func TestPortComparatorReversesIncomingWestPortOrder(t *testing.T) {
+	arena := layered.NewLGraphArena()
+	graphID := arena.AddGraph()
+	sourceA := arena.AddNode(graphID)
+	sourceB := arena.AddNode(graphID)
+	target := arena.AddNode(graphID)
+	_, incomingA := connectPorts(arena, sourceA, target, 1)
+	_, incomingB := connectPorts(arena, sourceB, target, 2)
+	arena.SetPortSide(incomingA, layered.WestSide)
+	arena.SetPortSide(incomingB, layered.WestSide)
+	ports := []layered.LPortID{incomingA, incomingB}
+	comparator := NewPortComparator(
+		arena, []layered.LNodeID{sourceA, sourceB}, layered.OrderingNodesAndEdges, nil, false)
+	slices.SortStableFunc(ports, comparator.Compare)
+	if want := []layered.LPortID{incomingB, incomingA}; !reflect.DeepEqual(ports, want) {
+		t.Fatalf("west incoming port order = %v, want %v", ports, want)
 	}
 }
 

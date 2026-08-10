@@ -11,16 +11,14 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 
-// D2's patched elkjs 0.8.2 bundle and the pristine elkjs 0.8.2 bundle are
-// behaviorally equivalent through the public asynchronous API used here.
+// This is the unmodified bundled distribution from the official elkjs 0.12.0
+// tag. Refuse every other artifact so an in-progress native port cannot
+// accidentally compare itself with an older checkout or a locally rebuilt
+// bundle.
 const acceptedAssets = new Map([
   [
-    'a297b92da4a257b95c129cc1d8cfb379e2c89bcd4442af90ac06fdd2b1e220b4',
-    'D2 embedded elkjs 0.8.2 bundle',
-  ],
-  [
-    'cd56bf0ddb7ad2587583461d523fdd974dc56b59efd20cdfee954e1112ff1a49',
-    'upstream elkjs 0.8.2 bundled distribution',
+    '1222e44f953ce7746af23801e723708f8e6f436b8b377a6a5fc7552f34a307b3',
+    'official elkjs 0.12.0 bundled distribution',
   ],
 ]);
 
@@ -29,7 +27,8 @@ function usage(message) {
     console.error(message);
   }
   console.error(
-    'usage: node oracle.mjs --asset /path/to/elk.bundled.js [--known-layout-options]',
+    'usage: node oracle.mjs --asset /path/to/elk.bundled.js ' +
+      '[--known-layout-algorithms | --known-layout-options]',
   );
   process.exit(2);
 }
@@ -70,7 +69,7 @@ async function main() {
   if (!description) {
     throw new Error(
       `unrecognized ELK oracle asset ${asset} (sha256 ${digest}); ` +
-        'expected the pinned elkjs 0.8.2 bundle',
+        'expected the pinned official elkjs 0.12.0 bundle',
     );
   }
 
@@ -82,6 +81,13 @@ async function main() {
   }
 
   const elk = new ELK();
+  if (argv.includes('--known-layout-algorithms')) {
+    const algorithms = await elk.knownLayoutAlgorithms();
+    process.stdout.write(
+      `${JSON.stringify(withoutGWTIdentityHashes(algorithms))}\n`,
+    );
+    return;
+  }
   if (argv.includes('--known-layout-options')) {
     const options = await elk.knownLayoutOptions();
     process.stdout.write(`${JSON.stringify(withoutGWTIdentityHashes(options))}\n`);

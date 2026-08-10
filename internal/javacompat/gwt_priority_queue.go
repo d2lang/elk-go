@@ -18,9 +18,11 @@
 
 package javacompat
 
-// GWTPriorityQueue reproduces the GWT java.util.PriorityQueue implementation
-// linked into elkjs 0.8.2. Its bulk-add heapification and equal-item sift-down
-// behavior differ observably from OpenJDK's PriorityQueue.
+// GWTPriorityQueue reproduces GWT 2.11.0's java.util.PriorityQueue
+// implementation linked into elkjs 0.12.0. The relevant GWT source is
+// unchanged from the 2.9.0 runtime used by the former elkjs 0.8.2 baseline.
+// Its bulk-add heapification and equal-item sift-down behavior differ
+// observably from OpenJDK's PriorityQueue.
 type GWTPriorityQueue[T any] struct {
 	heap    []T
 	compare Comparator[T]

@@ -65,10 +65,34 @@ func (model *abstractForceModel) iterationDone() {
 
 func avoidSamePosition(random *javacompat.Random, forcer, forcee *Particle) {
 	for forcer.Position.X-forcee.Position.X == 0 && forcer.Position.Y-forcee.Position.Y == 0 {
-		forcer.Position.X += random.NextDouble() - 0.5
-		forcer.Position.Y += random.NextDouble() - 0.5
-		forcee.Position.X += random.NextDouble() - 0.5
-		forcee.Position.Y += random.NextDouble() - 0.5
+		if forcer.bendEdge != nil && forcee.bendEdge != nil {
+			// ELK 0.12 first separates coincident bend particles
+			// orthogonally to their respective edge directions. Its second
+			// update intentionally targets the first particle as well.
+			firstVector := forcer.bendEdge.TargetPoint().Sub(forcer.bendEdge.SourcePoint())
+			firstLength := forceVectorLength(firstVector)
+			forcer.Position = forcer.Position.Add(geometry.Point{
+				X: firstVector.X / firstLength * 2,
+				Y: -firstVector.Y / firstLength * 2,
+			})
+			secondVector := forcee.bendEdge.TargetPoint().Sub(forcee.bendEdge.SourcePoint())
+			secondLength := forceVectorLength(secondVector)
+			length := 2.0
+			if forcer.bendEdge == forcee.bendEdge {
+				// Java compares the two freshly allocated KVector instances by
+				// identity, so this branch is unreachable in the source too.
+				length = 2
+			}
+			forcer.Position = forcer.Position.Add(geometry.Point{
+				X: secondVector.X / secondLength * length,
+				Y: -secondVector.Y / secondLength * length,
+			})
+		} else {
+			forcer.Position.X += random.NextDouble() - 0.5
+			forcer.Position.Y += random.NextDouble() - 0.5
+			forcee.Position.X += random.NextDouble() - 0.5
+			forcee.Position.Y += random.NextDouble() - 0.5
+		}
 	}
 }
 
@@ -90,7 +114,7 @@ func (model *eadesModel) layout(fgraph *FGraph, monitor core.ProgressMonitor) {
 func (model *eadesModel) displacement(forcer, forcee *Particle) geometry.Point {
 	avoidSamePosition(model.random, forcer, forcee)
 	displacement := forcee.Position.Sub(forcer.Position)
-	length := displacement.Length()
+	length := forceVectorLength(displacement)
 	distance := math.Max(0, length-forcer.Radius()-forcee.Radius())
 	connection := model.graph.Connection(forcer, forcee)
 	var force float64
@@ -99,12 +123,14 @@ func (model *eadesModel) displacement(forcer, forcee *Particle) geometry.Point {
 	} else {
 		force = eadesRepulsive(distance, model.repulsionFactor) * float64(forcer.Priority)
 	}
-	return displacement.Scale(force / length)
+	scale := float64(force / length)
+	return displacement.Scale(scale)
 }
 
 func eadesRepulsive(distance, factor float64) float64 {
 	if distance > 0 {
-		return factor / (distance * distance)
+		distanceSquared := float64(distance * distance)
+		return factor / distanceSquared
 	}
 	return factor * 100
 }
@@ -155,23 +181,41 @@ func (model *fruchtermanReingoldModel) layout(fgraph *FGraph, monitor core.Progr
 func (model *fruchtermanReingoldModel) displacement(forcer, forcee *Particle) geometry.Point {
 	avoidSamePosition(model.random, forcer, forcee)
 	displacement := forcee.Position.Sub(forcer.Position)
-	length := displacement.Length()
+	length := forceVectorLength(displacement)
 	distance := math.Max(0, length-forcer.Radius()-forcee.Radius())
 	force := frRepulsive(distance, model.k) * float64(forcer.Priority)
 	if connection := model.graph.Connection(forcer, forcee); connection > 0 {
-		force -= frAttractive(distance, model.k) * float64(connection)
+		// Same-type conversions here and below are deliberate. The Go spec
+		// otherwise permits fused floating-point evaluation across statements,
+		// while GWT's generated JavaScript rounds these intermediate products.
+		attraction := float64(frAttractive(distance, model.k) * float64(connection))
+		force -= attraction
 	}
-	return displacement.Scale(force * model.temperature / length)
+	scaledForce := float64(force * model.temperature)
+	scale := float64(scaledForce / length)
+	return displacement.Scale(scale)
+}
+
+func forceVectorLength(vector geometry.Point) float64 {
+	// Explicit conversions preserve the two multiplications as separately
+	// rounded operations before the addition, matching KVector.length in GWT.
+	xSquared := float64(vector.X * vector.X)
+	ySquared := float64(vector.Y * vector.Y)
+	return math.Sqrt(xSquared + ySquared)
 }
 
 func frRepulsive(distance, k float64) float64 {
+	kSquared := float64(k * k)
 	if distance > 0 {
-		return k * k / distance
+		return kSquared / distance
 	}
-	return k * k * 100
+	return float64(kSquared * 100)
 }
 
-func frAttractive(distance, k float64) float64 { return distance * distance / k }
+func frAttractive(distance, k float64) float64 {
+	distanceSquared := float64(distance * distance)
+	return distanceSquared / k
+}
 
 func runForceIterations(
 	model *abstractForceModel,
@@ -183,25 +227,25 @@ func runForceIterations(
 	monitor.Begin("Component Layout", 1)
 	iterations := 0
 	for moreIterations(iterations) && !monitor.Canceled() {
-		particles := model.graph.Particles()
-		for _, node := range model.graph.Nodes {
-			for _, forcer := range particles {
-				if forcer != &node.Particle {
-					node.Displacement = node.Displacement.Add(calculate(forcer, &node.Particle))
-				}
-			}
-		}
-		for _, node := range model.graph.Nodes {
-			node.Displacement = node.Displacement.Bound(
-				-model.displacementBound, -model.displacementBound,
-				model.displacementBound, model.displacementBound,
-			)
-			node.Position = node.Position.Add(node.Displacement)
-			node.Displacement = geometry.Point{}
-		}
 		model.iterationDone()
 		if afterIteration != nil {
 			afterIteration()
+		}
+		particles := model.graph.Particles()
+		for _, forcee := range particles {
+			for _, forcer := range particles {
+				if forcer != forcee {
+					forcee.Displacement = forcee.Displacement.Add(calculate(forcer, forcee))
+				}
+			}
+		}
+		for _, particle := range particles {
+			particle.Displacement = particle.Displacement.Bound(
+				-model.displacementBound, -model.displacementBound,
+				model.displacementBound, model.displacementBound,
+			)
+			particle.Position = particle.Position.Add(particle.Displacement)
+			particle.Displacement = geometry.Point{}
 		}
 		iterations++
 	}

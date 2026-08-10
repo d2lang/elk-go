@@ -13,24 +13,12 @@
 package components
 
 import (
-	"fmt"
 	"math"
 	"sort"
-	"strings"
 
 	basegraph "github.com/d2lang/elk-go/internal/graph"
 	"github.com/d2lang/elk-go/internal/layered"
 )
-
-type componentOrderingStrategy uint8
-
-const (
-	componentOrderingNone componentOrderingStrategy = iota
-	componentOrderingInsidePortSideGroups
-	componentOrderingForceModelOrder
-)
-
-const componentOrderingPropertyID = "org.eclipse.elk.layered.considerModelOrder.components"
 
 // ComponentsProcessor splits an unlayered graph into connected components
 // and combines the fully laid-out components again.
@@ -80,14 +68,17 @@ func (processor *ComponentsProcessor) Split(
 		components = append(components, componentID)
 	}
 	if hasExternalPorts {
-		if componentOrdering(&graph.Properties) == componentOrderingForceModelOrder {
+		switch basegraph.Get(&graph.Properties, layered.ComponentOrdering) {
+		case layered.ComponentOrderingGroupModelOrder:
 			processor.graphPlacer = &componentGroupModelOrderGraphPlacer{}
-		} else {
+		case layered.ComponentOrderingModelOrder:
+			processor.graphPlacer = &simpleRowGraphPlacer{modelOrder: true}
+		default:
 			processor.graphPlacer = &componentGroupGraphPlacer{}
 		}
 	}
 
-	if componentOrdering(&graph.Properties) != componentOrderingNone {
+	if basegraph.Get(&graph.Properties, layered.ComponentOrdering) != layered.ComponentOrderingNone {
 		sort.SliceStable(components, func(left, right int) bool {
 			return minimalModelOrder(arena, components[left]) <
 				minimalModelOrder(arena, components[right])
@@ -144,24 +135,6 @@ func depthFirstComponent(
 		}
 	}
 	return nodes, externalSides
-}
-
-func componentOrdering(properties *basegraph.PropertyMap) componentOrderingStrategy {
-	value, found := properties.Raw(componentOrderingPropertyID)
-	if !found {
-		return componentOrderingNone
-	}
-	if typed, ok := value.(componentOrderingStrategy); ok {
-		return typed
-	}
-	switch strings.ToUpper(fmt.Sprint(value)) {
-	case "INSIDE_PORT_SIDE_GROUPS":
-		return componentOrderingInsidePortSideGroups
-	case "FORCE_MODEL_ORDER":
-		return componentOrderingForceModelOrder
-	default:
-		return componentOrderingNone
-	}
 }
 
 func minimalModelOrder(arena *layered.LGraphArena, graphID layered.LGraphID) int {

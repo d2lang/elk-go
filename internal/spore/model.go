@@ -66,7 +66,9 @@ func (n *node) underlap(other *node) float64 {
 		vScale = 1 - verticalUnderlap/verticalCenterDistance
 	}
 	scale := math.Min(hScale, vScale)
-	return (1 - scale) * math.Hypot(horizontalCenterDistance, verticalCenterDistance)
+	distance := sporeVectorLength(geometry.Point{X: horizontalCenterDistance, Y: verticalCenterDistance})
+	remainingScale := 1 - scale
+	return float64(remainingScale * distance)
 }
 
 func (n *node) distance(other *node, direction geometry.Point) float64 {

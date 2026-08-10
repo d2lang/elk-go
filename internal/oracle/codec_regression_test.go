@@ -18,7 +18,7 @@ import (
 )
 
 // TestCandidateCodecRegressionParity pins JSON member-order alias resolution
-// and replacement of pre-layout edge sections to the frozen elkjs oracle.
+// and replacement of pre-layout edge sections to the pinned official 0.12 oracle.
 func TestCandidateCodecRegressionParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_CODEC") != "1" {
 		t.Skip("set ELK_GO_ORACLE_CODEC=1 to run codec regression differentials")
@@ -63,7 +63,7 @@ func TestCandidateCodecRegressionParity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := Differential(ctx, runner, fixture, elk.LayoutJSON, DefaultTolerance); err != nil {
+			if err := Differential(ctx, runner, fixture, elk.LayoutJSON, ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, fixture)
 			}
 		})

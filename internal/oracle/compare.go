@@ -6,7 +6,7 @@
 //
 // SPDX-License-Identifier: EPL-2.0
 
-// Package oracle provides the pinned elkjs 0.8.2 differential oracle used
+// Package oracle provides the pinned elkjs 0.12.0 differential oracle used
 // while porting ELK to Go. It is test and development infrastructure, not part
 // of elk-go's public layout API.
 package oracle
@@ -33,6 +33,11 @@ type Tolerance struct {
 // DefaultTolerance permits only sub-micro-pixel differences at ordinary D2
 // diagram scales.
 var DefaultTolerance = Tolerance{Absolute: 1e-7, Relative: 1e-9}
+
+// ExactTolerance requires byte-level numeric equality after JSON numbers are
+// parsed. Use it for deterministic provider smoke cases; a narrow coordinate
+// tolerance can otherwise hide a reproducible Java/GWT runtime mismatch.
+var ExactTolerance = Tolerance{}
 
 // Difference is the first structural or value mismatch found in two outputs.
 type Difference struct {

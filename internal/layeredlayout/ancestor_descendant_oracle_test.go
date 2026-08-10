@@ -16,11 +16,11 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
-// TestLayeredAncestorToGrandchildEdgeFrozen pins ELK 0.8.1's handling of an
+// TestLayeredAncestorToGrandchildEdgeOfficial0120 pins official elkjs 0.12.0's handling of an
 // edge from a compound node to a non-direct descendant. The source exits the
 // compound's south side and routes outside the intermediate compound before
 // entering it from the north.
-func TestLayeredAncestorToGrandchildEdgeFrozen(t *testing.T) {
+func TestLayeredAncestorToGrandchildEdgeOfficial0120(t *testing.T) {
 	var graph elk.Graph
 	if err := json.Unmarshal([]byte(ancestorToGrandchildFixture), &graph); err != nil {
 		t.Fatal(err)
@@ -62,7 +62,7 @@ func TestLayeredAncestorToGrandchildEdgeFrozen(t *testing.T) {
 }
 
 // TestLayeredAncestorToGrandchildEdgeOracleParity compares the complete graph
-// with the frozen elkjs 0.8.2 / ELK 0.8.1 artifact.
+// with official elkjs 0.12.0.
 func TestLayeredAncestorToGrandchildEdgeOracleParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_LAYERED_STRATEGIES") != "1" {
 		t.Skip("set ELK_GO_ORACLE_LAYERED_STRATEGIES=1 to run Layered strategy differentials")
@@ -74,15 +74,15 @@ func TestLayeredAncestorToGrandchildEdgeOracleParity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := oracle.Differential(ctx, runner, []byte(ancestorToGrandchildFixture),
-		elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+		elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 		t.Fatalf("%v\ninput: %s", err, ancestorToGrandchildFixture)
 	}
 }
 
-// TestLayeredAncestorSharedPortOutsideSelfLoopFrozen pins the parent-port net
-// flow used by ELK 0.8.1. An outside self-loop contributes one output and one
+// TestLayeredAncestorSharedPortOutsideSelfLoopOfficial0120 pins the parent-port
+// net flow retained by official elkjs 0.12.0. An outside self-loop contributes one output and one
 // input vote, so it must not change the side selected by the remaining edges.
-func TestLayeredAncestorSharedPortOutsideSelfLoopFrozen(t *testing.T) {
+func TestLayeredAncestorSharedPortOutsideSelfLoopOfficial0120(t *testing.T) {
 	tests := []struct {
 		direction             string
 		rootWidth, rootHeight float64
@@ -156,7 +156,7 @@ func TestLayeredAncestorSharedPortOutsideSelfLoopOracleParity(t *testing.T) {
 			defer cancel()
 			fixture := ancestorSharedPortOutsideSelfLoopFixture(direction)
 			if err := oracle.Differential(ctx, runner, fixture, elk.LayoutJSON,
-				oracle.DefaultTolerance); err != nil {
+				oracle.ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, fixture)
 			}
 		})

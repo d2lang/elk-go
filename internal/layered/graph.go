@@ -44,6 +44,8 @@ const (
 	NorthSouthPortNode
 	LabelNode
 	BreakingPointNode
+	PlaceholderNode
+	NonShiftingPlaceholderNode
 )
 
 func (kind NodeType) String() string {
@@ -60,6 +62,10 @@ func (kind NodeType) String() string {
 		return "LABEL"
 	case BreakingPointNode:
 		return "BREAKING_POINT"
+	case PlaceholderNode:
+		return "PLACEHOLDER"
+	case NonShiftingPlaceholderNode:
+		return "NONSHIFTING_PLACEHOLDER"
 	default:
 		return fmt.Sprintf("NodeType(%d)", kind)
 	}

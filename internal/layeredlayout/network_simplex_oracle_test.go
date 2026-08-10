@@ -19,8 +19,8 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
-// TestNetworkSimplexPlacementOracleParity freezes source-shaped placement
-// behaviors against the elkjs 0.8.2 / ELK 0.8.1 artifact.
+// TestNetworkSimplexPlacementOracleParity checks source-shaped placement
+// behaviors against official elkjs 0.12.0.
 func TestNetworkSimplexPlacementOracleParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_LAYERED_STRATEGIES") != "1" {
 		t.Skip("set ELK_GO_ORACLE_LAYERED_STRATEGIES=1 to run Layered strategy differentials")
@@ -50,7 +50,7 @@ func TestNetworkSimplexPlacementOracleParity(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := oracle.Differential(
-				ctx, runner, []byte(test.input), elk.LayoutJSON, oracle.DefaultTolerance,
+				ctx, runner, []byte(test.input), elk.LayoutJSON, oracle.ExactTolerance,
 			); err != nil {
 				want, _ := runner.Layout(ctx, []byte(test.input))
 				got, _ := elk.LayoutJSON([]byte(test.input))
@@ -60,24 +60,24 @@ func TestNetworkSimplexPlacementOracleParity(t *testing.T) {
 	}
 }
 
-func TestFrozenELKJS082NetworkSimplexSelfLoopPortCache(t *testing.T) {
+func TestOfficialELKJS0120NetworkSimplexSelfLoopPortCache(t *testing.T) {
 	want := []byte(`{"id":"root","layoutOptions":{"elk.algorithm":"layered","elk.layered.nodePlacement.strategy":"NETWORK_SIMPLEX"},"children":[{"id":"a","width":34,"height":24,"layoutOptions":{"elk.portConstraints":"FIXED_SIDE"},"ports":[{"id":"ap","x":34,"y":13,"width":4,"height":4,"layoutOptions":{"elk.port.side":"EAST"}}],"x":12,"y":23},{"id":"b","width":42,"height":28,"x":105,"y":127},{"id":"c","width":26,"height":35,"x":113,"y":12},{"id":"d","width":38,"height":18,"x":167,"y":24},{"id":"e","width":29,"height":31,"x":225,"y":17}],"edges":[{"id":"ab","sources":["ap"],"targets":["b"],"labels":[{"id":"abl","text":"ab","width":15,"height":8,"layoutOptions":{"elk.edgeLabels.placement":"CENTER"},"x":70,"y":94}],"sections":[{"id":"ab_s0","startPoint":{"x":50,"y":38},"endPoint":{"x":105,"y":141},"bendPoints":[{"x":60,"y":38},{"x":60,"y":91},{"x":95,"y":91},{"x":95,"y":141}],"incomingShape":"ap","outgoingShape":"b"}],"container":"root"},{"id":"bb","sources":["b"],"targets":["b"],"sections":[{"id":"bb_s0","startPoint":{"x":119,"y":127},"endPoint":{"x":133,"y":127},"bendPoints":[{"x":119,"y":117},{"x":133,"y":117}],"incomingShape":"b","outgoingShape":"b"}],"container":"root"},{"id":"ac","sources":["a"],"targets":["c"],"sections":[{"id":"ac_s0","startPoint":{"x":46,"y":30},"endPoint":{"x":113,"y":30},"incomingShape":"a","outgoingShape":"c"}],"container":"root"},{"id":"bd","sources":["b"],"targets":["d"],"sections":[{"id":"bd_s0","startPoint":{"x":147,"y":141},"endPoint":{"x":167,"y":36},"bendPoints":[{"x":157,"y":141},{"x":157,"y":36}],"incomingShape":"b","outgoingShape":"d"}],"container":"root"},{"id":"cd","sources":["c"],"targets":["d"],"sections":[{"id":"cd_s0","startPoint":{"x":139,"y":30},"endPoint":{"x":167,"y":30},"incomingShape":"c","outgoingShape":"d"}],"container":"root"},{"id":"de","sources":["d"],"targets":["e"],"sections":[{"id":"de_s0","startPoint":{"x":205,"y":33},"endPoint":{"x":225,"y":33},"incomingShape":"d","outgoingShape":"e"}],"container":"root"}],"x":0,"y":0,"width":266,"height":167}`)
 	got, err := elk.LayoutJSON([]byte(networkSimplexSelfLoopPortCache))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := oracle.CompareJSON(want, got, oracle.DefaultTolerance); err != nil {
+	if err := oracle.CompareJSON(want, got, oracle.ExactTolerance); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestFrozenELKJS082NetworkSimplexFlexibleSelfLoopError(t *testing.T) {
+func TestOfficialELKJS0120NetworkSimplexFlexibleSelfLoopError(t *testing.T) {
 	_, err := elk.LayoutJSON([]byte(networkSimplexFlexibleSelfLoopError))
 	if err == nil {
-		t.Fatal("layout succeeded, want ELK 0.8.1 auxiliary-edge error")
+		t.Fatal("layout succeeded, want official elkjs 0.12.0 auxiliary-edge error")
 	}
 	if !strings.Contains(err.Error(), "NEdge must have a source and target NNode specified") {
-		t.Fatalf("layout error = %q, want ELK 0.8.1 auxiliary-edge error", err)
+		t.Fatalf("layout error = %q, want official elkjs 0.12.0 auxiliary-edge error", err)
 	}
 }
 
@@ -97,7 +97,7 @@ func TestNetworkSimplexFlexibleSelfLoopErrorOracleParity(t *testing.T) {
 		if err == nil {
 			t.Errorf("%s layout succeeded, want auxiliary-edge error", name)
 		} else if !strings.Contains(err.Error(), "NEdge must have a source and target NNode specified") {
-			t.Errorf("%s layout error = %q, want ELK 0.8.1 auxiliary-edge error", name, err)
+			t.Errorf("%s layout error = %q, want official elkjs 0.12.0 auxiliary-edge error", name, err)
 		}
 	}
 }

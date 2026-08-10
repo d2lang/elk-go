@@ -12,6 +12,7 @@
 package mrtree
 
 import (
+	"fmt"
 	"math"
 	"sort"
 
@@ -33,11 +34,16 @@ func Register(registry *core.AlgorithmRegistry) error {
 		KnownOptions: []string{
 			"org.eclipse.elk.padding",
 			"org.eclipse.elk.spacing.nodeNode",
+			"org.eclipse.elk.spacing.edgeNode",
 			"org.eclipse.elk.aspectRatio",
 			"org.eclipse.elk.priority",
 			"org.eclipse.elk.separateConnectedComponents",
 			"org.eclipse.elk.debugMode",
+			"org.eclipse.elk.direction",
+			"org.eclipse.elk.interactive",
+			"org.eclipse.elk.interactiveLayout",
 			"org.eclipse.elk.nodeSize.constraints",
+			"org.eclipse.elk.nodeSize.fixedGraphSize",
 			"org.eclipse.elk.nodeSize.minimum",
 			"org.eclipse.elk.nodeSize.options",
 			"org.eclipse.elk.nodeLabels.placement",
@@ -45,6 +51,16 @@ func Register(registry *core.AlgorithmRegistry) error {
 			"org.eclipse.elk.portLabels.placement",
 			Weighting.ID,
 			SearchOrder.ID,
+			core.TopdownLayout.ID,
+			core.TopdownScaleFactor.ID,
+			core.TopdownHierarchicalNodeWidth.ID,
+			core.TopdownHierarchicalNodeAspectRatio.ID,
+			core.TopdownNodeType.ID,
+			PositionConstraint.ID,
+			EdgeRoutingMode.ID,
+			TreeLevel.ID,
+			Compaction.ID,
+			EdgeEndTextureLength.ID,
 		},
 	})
 }
@@ -60,18 +76,27 @@ func (*Provider) Layout(model *graph.Model, parent graph.NodeID, monitor core.Pr
 		layoutComponent(component, monitor.Subtask(1/float64(max(1, len(components)))))
 	}
 	packed := packComponents(components)
-	applyLayout(model, parent, packed)
-	return nil
+	return applyLayout(model, parent, packed)
 }
 
 func importGraph(model *graph.Model, parent graph.NodeID) *tGraph {
 	parentNode := model.Node(parent)
 	g := &tGraph{
-		padding:     graph.Get(&parentNode.Properties, Padding),
-		spacing:     graph.Get(&parentNode.Properties, SpacingNodeNode),
-		aspectRatio: graph.Get(&parentNode.Properties, AspectRatio),
-		separate:    graph.Get(&parentNode.Properties, SeparateConnectedComponents),
-		searchOrder: graph.Get(&parentNode.Properties, SearchOrder),
+		padding:              graph.Get(&parentNode.Properties, Padding),
+		spacing:              graph.Get(&parentNode.Properties, SpacingNodeNode),
+		spacingEdgeNode:      graph.Get(&parentNode.Properties, SpacingEdgeNode),
+		edgeEndTextureLength: graph.Get(&parentNode.Properties, EdgeEndTextureLength),
+		aspectRatio:          graph.Get(&parentNode.Properties, AspectRatio),
+		separate:             graph.Get(&parentNode.Properties, SeparateConnectedComponents),
+		searchOrder:          graph.Get(&parentNode.Properties, SearchOrder),
+		weighting:            graph.Get(&parentNode.Properties, Weighting),
+		direction:            graph.Get(&parentNode.Properties, Direction),
+		edgeRoutingMode:      graph.Get(&parentNode.Properties, EdgeRoutingMode),
+		compaction:           graph.Get(&parentNode.Properties, Compaction),
+		fixedGraphSize:       graph.Get(&parentNode.Properties, NodeSizeFixedGraphSize),
+	}
+	if g.direction == "UNDEFINED" {
+		g.direction = "DOWN"
 	}
 	byOrigin := make(map[graph.NodeID]*tNode, len(parentNode.Children))
 	for index, nodeID := range parentNode.Children {
@@ -151,7 +176,7 @@ func splitComponents(g *tGraph) []*tGraph {
 		if visited[node.id] {
 			continue
 		}
-		component := &tGraph{padding: g.padding, spacing: g.spacing, aspectRatio: g.aspectRatio, separate: g.separate, searchOrder: g.searchOrder}
+		component := g.settingsClone()
 		visit(node, component)
 		components = append(components, component)
 	}
@@ -163,6 +188,23 @@ func splitComponents(g *tGraph) []*tGraph {
 		}
 	}
 	return components
+}
+
+func (g *tGraph) settingsClone() *tGraph {
+	return &tGraph{
+		padding:              g.padding,
+		spacing:              g.spacing,
+		spacingEdgeNode:      g.spacingEdgeNode,
+		edgeEndTextureLength: g.edgeEndTextureLength,
+		aspectRatio:          g.aspectRatio,
+		separate:             g.separate,
+		searchOrder:          g.searchOrder,
+		weighting:            g.weighting,
+		direction:            g.direction,
+		edgeRoutingMode:      g.edgeRoutingMode,
+		compaction:           g.compaction,
+		fixedGraphSize:       g.fixedGraphSize,
+	}
 }
 
 func containsEdge(edges []*tEdge, edge *tEdge) bool {
@@ -179,15 +221,16 @@ func layoutComponent(g *tGraph, monitor core.ProgressMonitor) {
 	treeify(g)
 	root := ensureRoot(g)
 	computeFan(root)
-	orderNodes(root)
-	computeLevelHeights(root)
+	computeTreeLevels(root)
+	orderNodes(root, g.weighting)
+	computeLevelHeights(root, g.direction)
 	computeNeighbors(root)
 	placeNodes(g, root)
-	for _, node := range g.nodes {
-		for _, edge := range node.outgoing {
-			edge.bendPoints = nil
-		}
-	}
+	applyDirectionAndNodePositions(g)
+	computeLevelCoordinates(g)
+	compactGraph(g)
+	computeGraphBounds(g)
+	routeEdges(g)
 	monitor.Done()
 }
 
@@ -312,15 +355,41 @@ func computeFan(node *tNode) []int {
 	return levels
 }
 
-func orderNodes(root *tNode) {
+func computeTreeLevels(root *tNode) {
+	level := []*tNode{root}
+	for depth := 0; len(level) > 0; depth++ {
+		next := make([]*tNode, 0)
+		for _, node := range level {
+			node.treeLevel = depth
+			next = append(next, node.children()...)
+		}
+		level = next
+	}
+}
+
+func orderNodes(root *tNode, weighting string) {
+	if weighting == "MODEL_ORDER" {
+		return
+	}
+	if weighting == "CONSTRAINT" {
+		orderNodesByConstraint([]*tNode{root})
+		return
+	}
+	useDescendants := weighting == "DESCENDANTS"
 	var orderLevel func([]*tNode)
 	orderLevel = func(current []*tNode) {
 		if len(current) == 0 {
 			return
 		}
-		sort.SliceStable(current, func(i, j int) bool { return current[i].fan < current[j].fan })
+		weight := func(node *tNode) int {
+			if useDescendants {
+				return node.descendants
+			}
+			return node.fan
+		}
+		sort.SliceStable(current, func(i, j int) bool { return weight(current[i]) < weight(current[j]) })
 		firstLeaf := len(current)
-		for firstLeaf > 0 && current[firstLeaf-1].fan == 0 {
+		for firstLeaf > 0 && weight(current[firstLeaf-1]) == 0 {
 			firstLeaf--
 		}
 		inners := append([]*tNode(nil), current[:firstLeaf]...)
@@ -351,7 +420,7 @@ func orderNodes(root *tNode) {
 
 			fillGap := len(parent.outgoing)
 			for index := len(leaves) - 1; index >= 0 && fillGap > 0; index-- {
-				if leaves[index].fan != 0 {
+				if weight(leaves[index]) != 0 {
 					break
 				}
 				leaves[index].positionIndex = position
@@ -364,14 +433,105 @@ func orderNodes(root *tNode) {
 	orderLevel([]*tNode{root})
 }
 
-func computeLevelHeights(root *tNode) {
+func orderNodesByConstraint(current []*tNode) {
+	if len(current) == 0 {
+		return
+	}
+	undefined := make([]*tNode, 0, len(current))
+	inBounds := make([]*tNode, 0, len(current))
+	outOfBounds := make([]*tNode, 0, len(current))
+	for _, node := range current {
+		position := graph.Get(&node.props, PositionConstraint)
+		switch {
+		case position < 0:
+			undefined = append(undefined, node)
+		case position < len(current):
+			inBounds = append(inBounds, node)
+		default:
+			outOfBounds = append(outOfBounds, node)
+		}
+	}
+
+	sortedNodes := make([]*tNode, len(current))
+	for index := 0; index < len(inBounds); {
+		node := inBounds[index]
+		target := graph.Get(&node.props, PositionConstraint)
+		// This intentionally uses the shrinking inBounds size. It mirrors the
+		// 0.12 Java implementation, including that implementation detail.
+		if target >= 0 && target < len(inBounds) && sortedNodes[target] == nil {
+			sortedNodes[target] = node
+			inBounds = append(inBounds[:index], inBounds[index+1:]...)
+			continue
+		}
+		index++
+	}
+	for len(inBounds) > 0 {
+		node := inBounds[0]
+		inBounds = inBounds[1:]
+		target := graph.Get(&node.props, PositionConstraint)
+		for distance := 0; ; distance++ {
+			right := target + distance
+			if right >= 0 && right < len(sortedNodes) && sortedNodes[right] == nil {
+				sortedNodes[right] = node
+				break
+			}
+			left := target - distance
+			if left >= 0 && left < len(sortedNodes) && sortedNodes[left] == nil {
+				sortedNodes[left] = node
+				break
+			}
+		}
+	}
+	sort.SliceStable(outOfBounds, func(i, j int) bool {
+		return graph.Get(&outOfBounds[i].props, PositionConstraint) > graph.Get(&outOfBounds[j].props, PositionConstraint)
+	})
+	for index := len(sortedNodes) - 1; index >= 0 && len(outOfBounds) > 0; index-- {
+		if sortedNodes[index] == nil {
+			sortedNodes[index] = outOfBounds[0]
+			outOfBounds = outOfBounds[1:]
+		}
+	}
+	for index := range sortedNodes {
+		if sortedNodes[index] == nil && len(undefined) > 0 {
+			sortedNodes[index] = undefined[0]
+			undefined = undefined[1:]
+		}
+		sortedNodes[index].positionIndex = index
+	}
+
+	for _, parent := range current {
+		if parent.fan == 0 {
+			continue
+		}
+		children := parent.children()
+		orderNodesByConstraint(children)
+		sort.SliceStable(children, func(i, j int) bool {
+			return children[i].positionIndex < children[j].positionIndex
+		})
+		reordered := make([]*tEdge, 0, len(parent.outgoing))
+		for _, child := range children {
+			for _, edge := range parent.outgoing {
+				if edge.target == child {
+					reordered = append(reordered, edge)
+				}
+			}
+		}
+		parent.outgoing = reordered
+	}
+}
+
+func computeLevelHeights(root *tNode, direction string) {
 	level := []*tNode{root}
 	for len(level) > 0 {
 		height := 0.0
 		next := make([]*tNode, 0)
 		for _, node := range level {
-			if node.size.Y > height {
-				height = node.size.Y
+			size := node.size.Y
+			if direction == "LEFT" || direction == "RIGHT" {
+				size = node.size.X
+			}
+			if size > height {
+				height = size
 			}
 			next = append(next, node.children()...)
 		}
@@ -444,10 +604,18 @@ func placeNodes(g *tGraph, root *tNode) {
 	meanWidth := func(left, right *tNode) float64 {
 		width := 0.0
 		if left != nil {
-			width += left.size.X / 2
+			if g.direction == "LEFT" || g.direction == "RIGHT" {
+				width += left.size.Y / 2
+			} else {
+				width += left.size.X / 2
+			}
 		}
 		if right != nil {
-			width += right.size.X / 2
+			if g.direction == "LEFT" || g.direction == "RIGHT" {
+				width += right.size.Y / 2
+			} else {
+				width += right.size.X / 2
+			}
 		}
 		return width
 	}
@@ -555,8 +723,871 @@ func placeNodes(g *tGraph, root *tNode) {
 
 func javaRound(value float64) int { return int(math.Floor(value + .5)) }
 
+func applyDirectionAndNodePositions(g *tGraph) {
+	for _, node := range g.nodes {
+		x, y := node.xCoordinate, node.yCoordinate
+		switch g.direction {
+		case "UP":
+			y = -y
+		case "RIGHT":
+			x, y = y, x
+		case "LEFT":
+			x, y = -y, x
+		}
+		node.xCoordinate, node.yCoordinate = x, y
+		node.position = geometry.Point{
+			X: float64(x) - node.size.X/2,
+			Y: float64(y) - node.size.Y/2,
+		}
+	}
+}
+
+func computeGraphBounds(g *tGraph) {
+	if len(g.nodes) == 0 {
+		g.graphMin, g.graphMax = geometry.Point{}, geometry.Point{}
+		return
+	}
+	g.graphMin = geometry.Point{X: math.Inf(1), Y: math.Inf(1)}
+	g.graphMax = geometry.Point{X: math.Inf(-1), Y: math.Inf(-1)}
+	for _, node := range g.nodes {
+		g.graphMin.X = math.Min(g.graphMin.X, node.position.X)
+		g.graphMin.Y = math.Min(g.graphMin.Y, node.position.Y)
+		g.graphMax.X = math.Max(g.graphMax.X, node.position.X+node.size.X)
+		g.graphMax.Y = math.Max(g.graphMax.Y, node.position.Y+node.size.Y)
+	}
+}
+
+func computeLevelCoordinates(g *tGraph) {
+	type interval struct{ min, max float64 }
+	levels := make(map[int]interval)
+	for _, node := range g.nodes {
+		current, found := levels[node.treeLevel]
+		if !found {
+			current = interval{min: math.Inf(1), max: math.Inf(-1)}
+		}
+		if g.direction == "LEFT" || g.direction == "RIGHT" {
+			current.min = math.Min(current.min, node.position.X)
+			current.max = math.Max(current.max, node.position.X+node.size.X)
+		} else {
+			current.min = math.Min(current.min, node.position.Y)
+			current.max = math.Max(current.max, node.position.Y+node.size.Y)
+		}
+		levels[node.treeLevel] = current
+	}
+	for _, node := range g.nodes {
+		current := levels[node.treeLevel]
+		node.levelMin, node.levelMax = current.min, current.max
+	}
+}
+
+func compactGraph(g *tGraph) {
+	if !g.compaction || len(g.nodes) == 0 {
+		return
+	}
+	type interval struct{ min, max float64 }
+	levels := make([]interval, 0)
+	for _, node := range g.nodes {
+		for node.treeLevel >= len(levels) {
+			levels = append(levels, interval{min: math.Inf(1), max: math.Inf(-1)})
+		}
+		current := levels[node.treeLevel]
+		if g.direction == "LEFT" || g.direction == "RIGHT" {
+			current.min = math.Min(current.min, node.position.X)
+			current.max = math.Max(current.max, node.position.X+node.size.X)
+		} else {
+			current.min = math.Min(current.min, node.position.Y)
+			current.max = math.Max(current.max, node.position.Y+node.size.Y)
+		}
+		levels[node.treeLevel] = current
+	}
+
+	computeCompactionConstraints(g, g.spacing/4)
+	nodes := append([]*tNode(nil), g.nodes...)
+	sort.SliceStable(nodes, func(i, j int) bool {
+		return directionProjection(g.direction, nodes[i].position) < directionProjection(g.direction, nodes[j].position)
+	})
+	for _, node := range nodes {
+		if node.root {
+			continue
+		}
+		dependent := lowestDependentNode(node, g.direction)
+		parent := lowestParent(node, g)
+		newPosition, newPositionSize := 0.0, 0.0
+		if dependent != nil {
+			switch g.direction {
+			case "LEFT":
+				newPosition = dependent.position.X - g.spacing - node.size.X
+				if parent.position.X-g.spacing-node.size.X < newPosition {
+					newPosition = parent.position.X - g.spacing - node.size.X
+				}
+				newPositionSize = newPosition + node.size.X
+			case "RIGHT":
+				newPosition = dependent.position.X + dependent.size.X + g.spacing
+				if parent.position.X-g.spacing-node.size.X < newPosition {
+					newPosition = parent.position.X + parent.size.X + g.spacing
+				}
+				newPositionSize = newPosition + node.size.X
+			case "UP":
+				newPosition = dependent.position.Y - g.spacing - node.size.Y
+				if parent.position.Y-g.spacing-node.size.Y < newPosition {
+					newPosition = parent.position.Y - g.spacing - node.size.Y
+				}
+				newPositionSize = newPosition + node.size.Y
+			default:
+				newPosition = dependent.position.Y + dependent.size.Y + g.spacing
+				if parent.position.Y+g.spacing > newPosition {
+					newPosition = parent.position.Y + parent.size.Y + g.spacing
+				}
+				newPositionSize = newPosition + node.size.Y
+			}
+		} else if parent != nil {
+			switch g.direction {
+			case "LEFT":
+				newPosition = parent.position.X - g.spacing - node.size.X
+				newPositionSize = newPosition + node.size.X
+			case "RIGHT":
+				newPosition = parent.position.X + parent.size.X + g.spacing
+				newPositionSize = newPosition + node.size.X
+			case "UP":
+				newPosition = parent.position.Y - g.spacing - node.size.Y
+				newPositionSize = newPosition + node.size.Y
+			default:
+				newPosition = parent.position.Y + parent.size.Y + g.spacing
+				newPositionSize = newPosition + node.size.Y
+			}
+		}
+
+		if g.edgeRoutingMode != "AVOID_OVERLAP" {
+			setDirectionalPosition(node, g.direction, newPosition)
+			continue
+		}
+		levelIndex := -1
+		for index, level := range levels {
+			if level.min <= newPosition && level.max >= newPositionSize {
+				levelIndex = index
+				break
+			}
+		}
+		if levelIndex < 0 {
+			for index := 1; index < len(levels); index++ {
+				if g.direction == "LEFT" || g.direction == "UP" {
+					if levels[index].min <= newPosition {
+						levelIndex = index
+						break
+					}
+				} else if levels[index].min >= newPosition {
+					levelIndex = index
+					break
+				}
+			}
+		}
+		if levelIndex >= 0 {
+			setDirectionalPosition(node, g.direction, levels[levelIndex].min)
+			if levelIndex > 0 && levelIndex != node.treeLevel {
+				node.compactLevelAscension = true
+				node.treeLevel = levelIndex
+			}
+		}
+	}
+}
+
+func computeCompactionConstraints(g *tGraph, padding float64) {
+	for _, node := range g.nodes {
+		node.compactConstraints = nil
+	}
+	type scanPoint struct {
+		node  *tNode
+		point geometry.Point
+		start bool
+	}
+	points := make([]scanPoint, 0, len(g.nodes)*2)
+	for _, node := range g.nodes {
+		if node.dummy {
+			continue
+		}
+		points = append(points, scanPoint{node: node, point: geometry.Point{X: node.position.X - padding, Y: node.position.Y - padding}, start: true})
+	}
+	for _, node := range g.nodes {
+		if node.dummy {
+			continue
+		}
+		points = append(points, scanPoint{node: node, point: geometry.Point{X: node.position.X + node.size.X + padding, Y: node.position.Y + node.size.Y + padding}})
+	}
+	sort.SliceStable(points, func(i, j int) bool {
+		return perpendicularProjection(g.direction, points[i].point) < perpendicularProjection(g.direction, points[j].point)
+	})
+	active := make([]*tNode, 0)
+	candidate := make(map[*tNode]*tNode)
+	for _, point := range points {
+		node := point.node
+		if point.start {
+			active = compactionSetInsert(active, node, g.direction)
+			if left := compactionSetLeft(active, node, g.direction); left != nil {
+				candidate[node] = left
+			}
+			if right := compactionSetRight(active, node, g.direction); right != nil {
+				candidate[right] = node
+			}
+			continue
+		}
+		if left := compactionSetLeft(active, node, g.direction); left != nil && left == candidate[node] {
+			node.compactConstraints = append(node.compactConstraints, left)
+		}
+		if right := compactionSetRight(active, node, g.direction); right != nil && candidate[right] == node {
+			right.compactConstraints = append(right.compactConstraints, node)
+		}
+		active = compactionSetRemove(active, node, g.direction)
+	}
+}
+
+func directionProjection(direction string, point geometry.Point) float64 {
+	switch direction {
+	case "LEFT":
+		return -point.X
+	case "RIGHT":
+		return point.X
+	case "UP":
+		return -point.Y
+	default:
+		return point.Y
+	}
+}
+
+func perpendicularProjection(direction string, point geometry.Point) float64 {
+	if direction == "LEFT" || direction == "RIGHT" {
+		return point.Y
+	}
+	return point.X
+}
+
+func compactionSetInsert(set []*tNode, node *tNode, direction string) []*tNode {
+	value := directionProjection(direction, node.position)
+	index := sort.Search(len(set), func(i int) bool {
+		return directionProjection(direction, set[i].position) >= value
+	})
+	if index < len(set) && directionProjection(direction, set[index].position) == value {
+		return set
+	}
+	set = append(set, nil)
+	copy(set[index+1:], set[index:])
+	set[index] = node
+	return set
+}
+
+func compactionSetLeft(set []*tNode, node *tNode, direction string) *tNode {
+	value := directionProjection(direction, node.position)
+	index := sort.Search(len(set), func(i int) bool {
+		return directionProjection(direction, set[i].position) >= value
+	})
+	if index == 0 {
+		return nil
+	}
+	return set[index-1]
+}
+
+func compactionSetRight(set []*tNode, node *tNode, direction string) *tNode {
+	value := directionProjection(direction, node.position)
+	index := sort.Search(len(set), func(i int) bool {
+		return directionProjection(direction, set[i].position) >= value
+	})
+	if index+1 >= len(set) {
+		return nil
+	}
+	return set[index+1]
+}
+
+func compactionSetRemove(set []*tNode, node *tNode, direction string) []*tNode {
+	value := directionProjection(direction, node.position)
+	index := sort.Search(len(set), func(i int) bool {
+		return directionProjection(direction, set[i].position) >= value
+	})
+	if index < len(set) && directionProjection(direction, set[index].position) == value {
+		return append(set[:index], set[index+1:]...)
+	}
+	return set
+}
+
+func lowestDependentNode(node *tNode, direction string) *tNode {
+	if len(node.compactConstraints) == 0 {
+		return nil
+	}
+	result := node.compactConstraints[0]
+	for _, candidate := range node.compactConstraints[1:] {
+		switch direction {
+		case "LEFT":
+			if candidate.position.X < result.position.X {
+				result = candidate
+			}
+		case "RIGHT":
+			if candidate.position.X+candidate.size.X > result.position.X+result.size.X {
+				result = candidate
+			}
+		case "UP":
+			if candidate.position.Y < result.position.Y {
+				result = candidate
+			}
+		default:
+			if candidate.position.Y+candidate.size.Y > result.position.Y+result.size.Y {
+				result = candidate
+			}
+		}
+	}
+	return result
+}
+
+func lowestParent(node *tNode, g *tGraph) *tNode {
+	parents := make(map[*tNode]bool)
+	for _, edge := range g.edges {
+		if edge.target == node {
+			parents[edge.source] = true
+		}
+	}
+	var result *tNode
+	resultProjection := math.Inf(-1)
+	for _, candidate := range g.nodes {
+		if !parents[candidate] {
+			continue
+		}
+		center := geometry.Point{X: candidate.position.X + candidate.size.X/2, Y: candidate.position.Y + candidate.size.Y/2}
+		projection := directionProjection(g.direction, center)
+		if result == nil || projection > resultProjection {
+			result, resultProjection = candidate, projection
+		}
+	}
+	return result
+}
+
+func setDirectionalPosition(node *tNode, direction string, value float64) {
+	if direction == "LEFT" || direction == "RIGHT" {
+		node.position.X = value
+	} else {
+		node.position.Y = value
+	}
+}
+
+func routeEdges(g *tGraph) {
+	for _, edge := range g.edges {
+		edge.bendPoints = nil
+	}
+	switch g.edgeRoutingMode {
+	case "NONE":
+		return
+	case "MIDDLE_TO_MIDDLE":
+		for _, edge := range g.edges {
+			middleToMiddleEdgeRoute(edge)
+		}
+	default:
+		avoidOverlapStartPoints(g)
+		avoidOverlapSpecialEdges(g)
+		avoidOverlapEndPoints(g)
+		for _, edge := range g.edges {
+			if len(edge.bendPoints) < 2 {
+				middleToMiddleEdgeRoute(edge)
+			}
+		}
+	}
+}
+
+type multiLevelGapEntry struct {
+	edge          *tEdge
+	first, second int
+}
+
+type multiLevelGap struct {
+	neighborOne, neighborTwo *tNode
+	entries                  []multiLevelGapEntry
+	onFirstSide, onLastSide  bool
+}
+
+func (gap *multiLevelGap) add(entry multiLevelGapEntry, g *tGraph) {
+	gap.entries = append(gap.entries, entry)
+	if len(gap.entries) > 1 {
+		sort.SliceStable(gap.entries, func(i, j int) bool {
+			left := gap.entries[i].edge.target.position
+			right := gap.entries[j].edge.target.position
+			if g.direction == "LEFT" || g.direction == "RIGHT" {
+				return left.Y < right.Y
+			}
+			return left.X < right.X
+		})
+	}
+	gap.update(g)
+}
+
+func (gap *multiLevelGap) update(g *tGraph) {
+	count := len(gap.entries)
+	for index, entry := range gap.entries {
+		interpolation := float64(index+1) / float64(count+1)
+		var first, second geometry.Point
+		switch {
+		case gap.neighborOne == nil && gap.neighborTwo == nil:
+			return
+		case gap.neighborOne != nil && gap.neighborTwo == nil:
+			gap.onLastSide = true
+			node := gap.neighborOne
+			switch g.direction {
+			case "LEFT":
+				coordinate := node.position.Y + node.size.Y + g.spacingEdgeNode*float64(index+1)
+				first = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: coordinate}
+				second = geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: coordinate}
+			case "RIGHT":
+				coordinate := node.position.Y + node.size.Y + g.spacingEdgeNode*float64(index+1)
+				first = geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: coordinate}
+				second = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: coordinate}
+			case "UP":
+				coordinate := node.position.X + node.size.X + g.spacingEdgeNode*float64(index+1)
+				first = geometry.Point{X: coordinate, Y: node.levelMax + g.spacingEdgeNode}
+				second = geometry.Point{X: coordinate, Y: node.levelMin - g.spacingEdgeNode}
+			default:
+				coordinate := node.position.X + node.size.X + g.spacingEdgeNode*float64(index+1)
+				first = geometry.Point{X: coordinate, Y: node.levelMin - g.spacingEdgeNode}
+				second = geometry.Point{X: coordinate, Y: node.levelMax + g.spacingEdgeNode}
+			}
+		case gap.neighborOne != nil && gap.neighborTwo != nil:
+			one, two := gap.neighborOne, gap.neighborTwo
+			if g.direction == "LEFT" || g.direction == "RIGHT" {
+				coordinate := two.position.Y*interpolation + (one.position.Y+one.size.Y)*(1-interpolation)
+				if g.direction == "LEFT" {
+					first = geometry.Point{X: one.levelMax + g.spacingEdgeNode, Y: coordinate}
+					second = geometry.Point{X: one.levelMin - g.spacingEdgeNode, Y: coordinate}
+				} else {
+					first = geometry.Point{X: one.levelMin - g.spacingEdgeNode, Y: coordinate}
+					second = geometry.Point{X: one.levelMax + g.spacingEdgeNode, Y: coordinate}
+				}
+			} else {
+				coordinate := two.position.X*interpolation + (one.position.X+one.size.X)*(1-interpolation)
+				if g.direction == "UP" {
+					first = geometry.Point{X: coordinate, Y: one.levelMax + g.spacingEdgeNode}
+					second = geometry.Point{X: coordinate, Y: one.levelMin - g.spacingEdgeNode}
+				} else {
+					first = geometry.Point{X: coordinate, Y: one.levelMin - g.spacingEdgeNode}
+					second = geometry.Point{X: coordinate, Y: one.levelMax + g.spacingEdgeNode}
+				}
+			}
+		default:
+			gap.onFirstSide = true
+			node := gap.neighborTwo
+			switch g.direction {
+			case "LEFT":
+				coordinate := node.position.Y - g.spacingEdgeNode*float64(index+1)
+				first = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: coordinate}
+				second = geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: coordinate}
+			case "RIGHT":
+				coordinate := node.position.Y - g.spacingEdgeNode*float64(index+1)
+				first = geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: coordinate}
+				second = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: coordinate}
+			case "UP":
+				coordinate := node.position.X - g.spacingEdgeNode*float64(index+1)
+				first = geometry.Point{X: coordinate, Y: node.levelMax + g.spacingEdgeNode}
+				second = geometry.Point{X: coordinate, Y: node.levelMin - g.spacingEdgeNode}
+			default:
+				coordinate := node.position.X - g.spacingEdgeNode*float64(index+1)
+				first = geometry.Point{X: coordinate, Y: node.levelMin - g.spacingEdgeNode}
+				second = geometry.Point{X: coordinate, Y: node.levelMax + g.spacingEdgeNode}
+			}
+		}
+		entry.edge.bendPoints[entry.first] = first
+		entry.edge.bendPoints[entry.second] = second
+	}
+}
+
+func avoidOverlapSpecialEdges(g *tGraph) {
+	maxLevel := 0
+	for _, node := range g.nodes {
+		maxLevel = max(maxLevel, node.treeLevel)
+	}
+	outsPerLevel := make([]int, maxLevel+1)
+	insPerLevel := make([]int, maxLevel+1)
+	gaps := make(map[[2]int]*multiLevelGap)
+	sideOneEdges, sideTwoEdges := 0, 0
+
+	for _, edge := range g.edges {
+		sourceLevel, targetLevel := edge.source.treeLevel, edge.target.treeLevel
+		levelDifference := targetLevel - sourceLevel
+		switch {
+		case levelDifference > 1:
+			for currentLevel := sourceLevel + 1; currentLevel < targetLevel; currentLevel++ {
+				levelNodes := make([]*tNode, 0)
+				for _, node := range g.nodes {
+					if node.treeLevel == currentLevel {
+						levelNodes = append(levelNodes, node)
+					}
+				}
+				horizontal := g.direction == "LEFT" || g.direction == "RIGHT"
+				sort.SliceStable(levelNodes, func(i, j int) bool {
+					if horizontal {
+						return levelNodes[i].position.Y < levelNodes[j].position.Y
+					}
+					return levelNodes[i].position.X < levelNodes[j].position.X
+				})
+				interpolation := float64(currentLevel-sourceLevel) / float64(targetLevel-sourceLevel)
+				gapIndex := 0
+				for ; gapIndex < len(levelNodes); gapIndex++ {
+					candidate := levelNodes[gapIndex].position.X
+					desired := edge.source.position.X*(1-interpolation) + edge.target.position.X*interpolation
+					if horizontal {
+						candidate = levelNodes[gapIndex].position.Y
+						desired = edge.source.position.Y*(1-interpolation) + edge.target.position.Y*interpolation
+					}
+					if candidate > desired {
+						break
+					}
+				}
+				if shouldSkipMultiLevelGap(edge, levelNodes, gapIndex, horizontal) {
+					continue
+				}
+				first := len(edge.bendPoints)
+				edge.bendPoints = append(edge.bendPoints, geometry.Point{}, geometry.Point{})
+				key := [2]int{currentLevel, gapIndex}
+				gap := gaps[key]
+				if gap == nil {
+					gap = &multiLevelGap{}
+					if gapIndex > 0 {
+						gap.neighborOne = levelNodes[gapIndex-1]
+					}
+					if gapIndex < len(levelNodes) {
+						gap.neighborTwo = levelNodes[gapIndex]
+					}
+					gaps[key] = gap
+				}
+				gap.add(multiLevelGapEntry{edge: edge, first: first, second: first + 1}, g)
+				if !horizontal {
+					if gap.onFirstSide && gap.neighborTwo != nil && gap.neighborTwo.position.X <= g.graphMin.X {
+						sideOneEdges++
+					}
+					if gap.onLastSide && gap.neighborOne != nil && gap.neighborOne.position.X+gap.neighborOne.size.X >= g.graphMax.X {
+						sideTwoEdges++
+					}
+				} else {
+					if gap.onFirstSide && gap.neighborTwo != nil && gap.neighborTwo.position.Y <= g.graphMin.Y {
+						sideOneEdges++
+					}
+					if gap.onLastSide && gap.neighborOne != nil && gap.neighborOne.position.Y+gap.neighborOne.size.Y >= g.graphMax.Y {
+						sideTwoEdges++
+					}
+				}
+			}
+		case levelDifference == 0:
+			middleToMiddleEdgeRoute(edge)
+		case levelDifference < 0:
+			outsPerLevel[sourceLevel]++
+			insPerLevel[targetLevel]++
+			sideOneEdges, sideTwoEdges = routeCycleEdge(g, edge, sideOneEdges, sideTwoEdges,
+				insPerLevel[targetLevel], outsPerLevel[sourceLevel])
+		}
+	}
+}
+
+func shouldSkipMultiLevelGap(edge *tEdge, levelNodes []*tNode, gapIndex int, horizontal bool) bool {
+	if len(levelNodes) == 0 {
+		return false
+	}
+	start := edge.source.position
+	if len(edge.bendPoints) > 0 {
+		start = edge.bendPoints[len(edge.bendPoints)-1]
+	}
+	lastNode := levelNodes[len(levelNodes)-1]
+	last := lastNode.position.Add(lastNode.size)
+	firstNode := levelNodes[0]
+	first := firstNode.position.Add(firstNode.size)
+	if horizontal {
+		if gapIndex >= len(levelNodes)-1 && start.Y > last.Y && edge.target.position.Y > last.Y {
+			return true
+		}
+		// first.X is intentional: it matches the 0.12 Java implementation.
+		return gapIndex <= 0 && start.Y < first.X && edge.target.position.Y < first.Y
+	}
+	if gapIndex >= len(levelNodes)-1 && start.X > last.X && edge.target.position.X > last.X {
+		return true
+	}
+	return gapIndex <= 0 && start.X < first.X && edge.target.position.X < first.X
+}
+
+func routeCycleEdge(g *tGraph, edge *tEdge, sideOneEdges, sideTwoEdges, incomingCount, outgoingCount int) (int, int) {
+	horizontal := g.direction == "LEFT" || g.direction == "RIGHT"
+	middle := 0.0
+	for _, node := range g.nodes {
+		if horizontal {
+			middle += node.position.Y + node.size.Y/2
+		} else {
+			middle += node.position.X + node.size.X/2
+		}
+	}
+	middle /= float64(len(g.nodes))
+	sourceMiddle := edge.source.position.X + edge.source.size.X/2
+	if horizontal {
+		sourceMiddle = edge.source.position.Y + edge.source.size.Y/2
+	}
+	bendCoordinate := 0.0
+	if sourceMiddle > middle {
+		sideTwoEdges++
+		bendCoordinate = math.Inf(-1)
+		for _, node := range g.nodes {
+			coordinate := node.position.X + node.size.X + g.spacingEdgeNode*float64(sideTwoEdges)
+			if horizontal {
+				coordinate = node.position.Y + node.size.Y + g.spacingEdgeNode*float64(sideTwoEdges)
+			}
+			bendCoordinate = math.Max(bendCoordinate, coordinate)
+		}
+	} else {
+		sideOneEdges++
+		bendCoordinate = math.Inf(1)
+		for _, node := range g.nodes {
+			coordinate := node.position.X - g.spacingEdgeNode*float64(sideOneEdges)
+			if horizontal {
+				coordinate = node.position.Y - g.spacingEdgeNode*float64(sideOneEdges)
+			}
+			bendCoordinate = math.Min(bendCoordinate, coordinate)
+		}
+	}
+
+	source, target := edge.source, edge.target
+	switch g.direction {
+	case "LEFT":
+		edge.bendPoints = append(edge.bendPoints,
+			geometry.Point{X: source.levelMin - g.spacingEdgeNode, Y: bendCoordinate},
+			geometry.Point{X: target.position.X + target.size.X + g.spacingEdgeNode + g.edgeEndTextureLength, Y: bendCoordinate},
+			geometry.Point{X: target.position.X + target.size.X + g.spacingEdgeNode + g.edgeEndTextureLength, Y: target.position.Y + target.size.Y/2},
+			geometry.Point{X: target.position.X + target.size.X, Y: target.position.Y + target.size.Y/2})
+	case "RIGHT":
+		edge.bendPoints = append(edge.bendPoints,
+			geometry.Point{X: source.levelMax + g.spacingEdgeNode, Y: source.position.Y + source.size.Y/2},
+			geometry.Point{X: source.position.X + source.size.X + g.spacingEdgeNode, Y: bendCoordinate},
+			geometry.Point{X: target.position.X - g.spacingEdgeNode - g.edgeEndTextureLength, Y: bendCoordinate},
+			geometry.Point{X: target.position.X - g.spacingEdgeNode - g.edgeEndTextureLength, Y: target.position.Y + target.size.Y/2},
+			geometry.Point{X: target.position.X, Y: target.position.Y + target.size.Y/2})
+	case "UP":
+		edge.bendPoints = append(edge.bendPoints,
+			geometry.Point{X: bendCoordinate, Y: source.levelMin - g.spacingEdgeNode},
+			geometry.Point{X: bendCoordinate, Y: target.position.Y + target.size.Y + g.spacingEdgeNode + g.edgeEndTextureLength},
+			geometry.Point{X: target.position.X + target.size.X/2, Y: target.position.Y + target.size.Y + g.spacingEdgeNode + g.edgeEndTextureLength},
+			geometry.Point{X: target.position.X + target.size.X/2, Y: target.position.Y + target.size.Y + g.spacingEdgeNode})
+	default:
+		if len(edge.bendPoints) > 0 {
+			edge.bendPoints[len(edge.bendPoints)-1].Y = source.levelMax + g.spacingEdgeNode*float64(outgoingCount)
+		}
+		edge.bendPoints = append(edge.bendPoints,
+			geometry.Point{X: bendCoordinate, Y: source.levelMax + g.spacingEdgeNode*float64(outgoingCount)},
+			geometry.Point{X: bendCoordinate, Y: target.position.Y - g.spacingEdgeNode*float64(incomingCount) - g.edgeEndTextureLength})
+	}
+	return sideOneEdges, sideTwoEdges
+}
+
+func middleToMiddleEdgeRoute(edge *tEdge) {
+	sourceHalfWidth := float64(edge.source.size.X / 2)
+	sourceHalfHeight := float64(edge.source.size.Y / 2)
+	source := geometry.Point{
+		X: float64(edge.source.position.X + sourceHalfWidth),
+		Y: float64(edge.source.position.Y + sourceHalfHeight),
+	}
+	targetHalfWidth := float64(edge.target.size.X / 2)
+	targetHalfHeight := float64(edge.target.size.Y / 2)
+	target := geometry.Point{
+		X: float64(edge.target.position.X + targetHalfWidth),
+		Y: float64(edge.target.position.Y + targetHalfHeight),
+	}
+	edge.bendPoints = append(geometry.Chain{source}, edge.bendPoints...)
+	edge.bendPoints = append(edge.bendPoints, target)
+	if len(edge.bendPoints) >= 2 {
+		toNodeBorder(&edge.bendPoints[0], edge.bendPoints[1], edge.source.size)
+		last := len(edge.bendPoints) - 1
+		toNodeBorder(&edge.bendPoints[last], edge.bendPoints[last-1], edge.target.size)
+	}
+}
+
+func avoidOverlapStartPoints(g *tGraph) {
+	for _, node := range g.nodes {
+		if node.dummy {
+			continue
+		}
+		outgoing := make([]*tEdge, 0)
+		for _, edge := range g.edges {
+			if edge.source == node && edge.source.treeLevel != edge.target.treeLevel {
+				outgoing = append(outgoing, edge)
+			}
+		}
+		sort.SliceStable(outgoing, func(i, j int) bool {
+			left, right := firstRoutePoint(outgoing[i]), firstRoutePoint(outgoing[j])
+			if g.direction == "LEFT" || g.direction == "RIGHT" {
+				return left.Y < right.Y
+			}
+			return left.X < right.X
+		})
+		for index, edge := range outgoing {
+			if node.compactLevelAscension && edge.target.treeLevel-edge.source.treeLevel > 0 {
+				continue
+			}
+			interpolation := .5
+			if len(outgoing) != 1 {
+				interpolation = float64(index+1) / float64(len(outgoing)+1)
+			}
+			var start, levelEnd geometry.Point
+			switch g.direction {
+			case "LEFT":
+				y := node.position.Y + node.size.Y*interpolation
+				start = geometry.Point{X: node.position.X, Y: y}
+				levelEnd = geometry.Point{X: math.Min(node.levelMin, node.position.X-g.spacingEdgeNode), Y: y}
+			case "RIGHT":
+				y := node.position.Y + node.size.Y*interpolation
+				start = geometry.Point{X: node.position.X + node.size.X, Y: y}
+				levelEnd = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: y}
+			case "UP":
+				x := node.position.X + node.size.X*interpolation
+				start = geometry.Point{X: x, Y: node.position.Y}
+				levelEnd = geometry.Point{X: x, Y: math.Min(node.position.Y-g.spacingEdgeNode, node.levelMin)}
+			default:
+				x := node.position.X + node.size.X*interpolation
+				start = geometry.Point{X: x, Y: node.position.Y + node.size.Y}
+				levelEnd = geometry.Point{X: x, Y: node.levelMax + g.spacingEdgeNode}
+			}
+			edge.bendPoints = append(geometry.Chain{start, levelEnd}, edge.bendPoints...)
+		}
+	}
+}
+
+func avoidOverlapEndPoints(g *tGraph) {
+	for _, node := range g.nodes {
+		if node.dummy {
+			continue
+		}
+		incoming := make([]*tEdge, 0)
+		for _, edge := range g.edges {
+			if edge.target == node && edge.source.treeLevel != edge.target.treeLevel {
+				incoming = append(incoming, edge)
+			}
+		}
+		sort.SliceStable(incoming, func(i, j int) bool {
+			left, right := lastRoutePoint(incoming[i]), lastRoutePoint(incoming[j])
+			if g.direction == "LEFT" || g.direction == "RIGHT" {
+				return left.Y < right.Y
+			}
+			return left.X < right.X
+		})
+		for index, edge := range incoming {
+			interpolation := .5
+			if len(incoming) != 1 {
+				interpolation = float64(index+1) / float64(len(incoming)+1)
+			}
+			switch g.direction {
+			case "LEFT":
+				y := node.position.Y + node.size.Y*interpolation
+				if node.position.X+node.size.X+g.edgeEndTextureLength < node.levelMax {
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: y})
+				} else if steepHorizontalEnd(edge, node, g.edgeEndTextureLength) {
+					last := lastRoutePoint(edge)
+					nextY := node.position.Y + node.size.Y/2
+					bendY := y
+					if nextY > last.Y {
+						bendY -= g.edgeEndTextureLength / 2
+					} else {
+						bendY += g.edgeEndTextureLength / 2
+					}
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{
+						X: node.position.X + node.size.X + g.edgeEndTextureLength/5.3,
+						Y: bendY,
+					})
+				}
+				edge.bendPoints = append(edge.bendPoints, geometry.Point{X: node.position.X + node.size.X, Y: y})
+			case "RIGHT":
+				y := node.position.Y + node.size.Y*interpolation
+				if node.position.X-g.edgeEndTextureLength > node.levelMin {
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: y})
+				} else if steepHorizontalEnd(edge, node, g.edgeEndTextureLength) {
+					last := lastRoutePoint(edge)
+					nextY := node.position.Y + node.size.Y/2
+					bendY := y
+					if nextY > last.Y {
+						bendY -= g.edgeEndTextureLength / 2
+					} else {
+						bendY += g.edgeEndTextureLength / 2
+					}
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{
+						X: node.position.X - g.edgeEndTextureLength/5.3,
+						Y: bendY,
+					})
+				}
+				edge.bendPoints = append(edge.bendPoints, geometry.Point{X: node.position.X, Y: y})
+			case "UP":
+				x := node.position.X + node.size.X*interpolation
+				if node.position.Y+node.size.Y+g.edgeEndTextureLength < node.levelMax {
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{X: x, Y: node.levelMax + g.spacingEdgeNode})
+				} else if steepVerticalEnd(edge, node, g.edgeEndTextureLength) {
+					last := lastRoutePoint(edge)
+					nextX := node.position.X + node.size.X/2
+					bendX := x
+					if nextX > last.X {
+						bendX -= g.edgeEndTextureLength / 2
+					} else {
+						bendX += g.edgeEndTextureLength / 2
+					}
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{
+						X: bendX,
+						Y: node.position.Y + node.size.Y + g.edgeEndTextureLength/5.3,
+					})
+				}
+				edge.bendPoints = append(edge.bendPoints, geometry.Point{X: x, Y: node.position.Y + node.size.Y})
+			default:
+				x := node.position.X + node.size.X*interpolation
+				if edge.target.treeLevel-edge.source.treeLevel < 0 {
+					last := lastRoutePoint(edge)
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{X: x, Y: last.Y})
+				} else if node.position.Y-g.edgeEndTextureLength > node.levelMin {
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{X: x, Y: node.levelMin - g.spacingEdgeNode})
+				} else if steepVerticalEnd(edge, node, g.edgeEndTextureLength) {
+					last := lastRoutePoint(edge)
+					nextX := node.position.X + node.size.X/2
+					bendX := x
+					if nextX > last.X {
+						bendX -= g.edgeEndTextureLength / 2
+					} else {
+						bendX += g.edgeEndTextureLength / 2
+					}
+					edge.bendPoints = append(edge.bendPoints, geometry.Point{
+						X: bendX,
+						Y: node.position.Y - g.edgeEndTextureLength/5.3,
+					})
+				}
+				edge.bendPoints = append(edge.bendPoints, geometry.Point{X: x, Y: node.position.Y})
+			}
+		}
+	}
+}
+
+func steepHorizontalEnd(edge *tEdge, node *tNode, textureLength float64) bool {
+	if textureLength <= 0 || len(edge.bendPoints) == 0 {
+		return false
+	}
+	last := lastRoutePoint(edge)
+	next := geometry.Point{X: node.position.X + node.size.X/2, Y: node.position.Y + node.size.Y/2}
+	return math.Abs(last.Y-next.Y)/(math.Abs(last.X-next.X)/40) > 50
+}
+
+func steepVerticalEnd(edge *tEdge, node *tNode, textureLength float64) bool {
+	if textureLength <= 0 || len(edge.bendPoints) == 0 {
+		return false
+	}
+	last := lastRoutePoint(edge)
+	next := geometry.Point{X: node.position.X + node.size.X/2, Y: node.position.Y + node.size.Y/2}
+	return math.Abs(last.X-next.X)/(math.Abs(last.Y-next.Y)/40) > 50
+}
+
+func firstRoutePoint(edge *tEdge) geometry.Point {
+	if len(edge.bendPoints) > 0 {
+		return edge.bendPoints[0]
+	}
+	return edge.target.position
+}
+
+func lastRoutePoint(edge *tEdge) geometry.Point {
+	if len(edge.bendPoints) > 0 {
+		return edge.bendPoints[len(edge.bendPoints)-1]
+	}
+	return edge.source.position
+}
+
 func packComponents(components []*tGraph) *tGraph {
 	if len(components) == 1 {
+		normalizeAndApplyPadding(components[0])
 		return components[0]
 	}
 	if len(components) == 0 {
@@ -586,7 +1617,7 @@ func packComponents(components []*tGraph) *tGraph {
 		rightArea := (rightBox.max.X - rightBox.min.X) * (rightBox.max.Y - rightBox.min.Y)
 		return leftArea < rightArea
 	})
-	result := &tGraph{padding: components[0].padding, spacing: components[0].spacing, aspectRatio: components[0].aspectRatio, separate: components[0].separate, searchOrder: components[0].searchOrder}
+	result := components[0].settingsClone()
 	maxRowWidth, totalArea := 0.0, 0.0
 	for _, component := range components {
 		box := boxes[component]
@@ -618,10 +1649,35 @@ func packComponents(components []*tGraph) *tGraph {
 		highest = math.Max(highest, height)
 		x += width + result.spacing
 	}
+	computeGraphBounds(result)
+	normalizeAndApplyPadding(result)
 	return result
 }
 
-func applyLayout(model *graph.Model, parent graph.NodeID, g *tGraph) {
+func normalizeAndApplyPadding(g *tGraph) {
+	if len(g.nodes) == 0 {
+		return
+	}
+	offset := geometry.Point{
+		X: g.padding.Left - g.graphMin.X,
+		Y: g.padding.Top - g.graphMin.Y,
+	}
+	for _, node := range g.nodes {
+		node.position = node.position.Add(offset)
+	}
+	seen := make(map[*tEdge]bool, len(g.edges))
+	for _, edge := range g.edges {
+		if seen[edge] {
+			continue
+		}
+		seen[edge] = true
+		edge.bendPoints.Offset(offset)
+	}
+	g.graphMin = g.graphMin.Add(offset)
+	g.graphMax = g.graphMax.Add(offset)
+}
+
+func applyLayout(model *graph.Model, parent graph.NodeID, g *tGraph) error {
 	minX, minY := float64(math.MaxInt32), float64(math.MaxInt32)
 	maxX, maxY := float64(math.MinInt32), float64(math.MinInt32)
 	for _, node := range g.nodes {
@@ -630,22 +1686,21 @@ func applyLayout(model *graph.Model, parent graph.NodeID, g *tGraph) {
 		maxX = math.Max(maxX, node.position.X+node.size.X/2)
 		maxY = math.Max(maxY, node.position.Y+node.size.Y/2)
 	}
-	offset := geometry.Point{X: g.padding.Left - minX, Y: g.padding.Top - minY}
 	for _, node := range g.nodes {
 		if node.origin == nil {
 			continue
 		}
-		node.position = node.position.Add(offset)
 		origin := model.Node(*node.origin)
-		origin.Shape.SetLocation(node.position.X-origin.Shape.Width/2, node.position.Y-origin.Shape.Height/2)
+		origin.Shape.SetLocation(node.position.X, node.position.Y)
+		origin.Properties.CopyFrom(&node.props)
 	}
 	for _, edge := range g.edges {
 		if edge.origin == nil || edge.source.origin == nil || edge.target.origin == nil {
 			continue
 		}
-		source, target := edge.source.position, edge.target.position
-		toNodeBorder(&source, target, edge.source.size)
-		toNodeBorder(&target, source, edge.target.size)
+		if len(edge.bendPoints) < 2 {
+			return fmt.Errorf("mrtree: the vector chain must contain at least a source and a target point")
+		}
 		origin := model.Edge(*edge.origin)
 		var sectionID graph.SectionID
 		if len(origin.Sections) == 0 {
@@ -654,28 +1709,44 @@ func applyLayout(model *graph.Model, parent graph.NodeID, g *tGraph) {
 			sectionID = origin.Sections[0]
 		}
 		section := model.Section(sectionID)
-		section.Start, section.End = source, target
+		section.Start = edge.bendPoints[0]
+		section.End = edge.bendPoints[len(edge.bendPoints)-1]
 		section.StartPresent, section.EndPresent = true, true
-		// The elkjs 0.8.2 JSON bridge exposes Mr. Tree's two-point vector
-		// chain in bendPoints as well as startPoint/endPoint.
-		section.BendPoints = geometry.Chain{source, target}
-		section.BendPointsPresent = true
+		if g.edgeRoutingMode == "MIDDLE_TO_MIDDLE" {
+			// elkjs 0.12's JSON bridge exposes both vectors in this mode as
+			// bend points in addition to using them as the section endpoints.
+			section.BendPoints = append(section.BendPoints[:0], edge.bendPoints...)
+		} else {
+			section.BendPoints = append(section.BendPoints[:0], edge.bendPoints[1:len(edge.bendPoints)-1]...)
+		}
+		section.BendPointsPresent = len(section.BendPoints) > 0
 	}
 	root := model.Node(parent)
-	root.Shape.SetDimensions(maxX-minX+g.padding.Left+g.padding.Right, maxY-minY+g.padding.Top+g.padding.Bottom)
+	width := maxX - minX + g.padding.Left + g.padding.Right
+	height := maxY - minY + g.padding.Top + g.padding.Bottom
+	if !g.fixedGraphSize {
+		root.Shape.SetDimensions(width, height)
+	}
+	graph.Set(&root.Properties, core.ChildAreaWidth, width-g.padding.Left-g.padding.Right)
+	graph.Set(&root.Properties, core.ChildAreaHeight, height-g.padding.Top-g.padding.Bottom)
+	return nil
 }
 
 func toNodeBorder(center *geometry.Point, next geometry.Point, size geometry.Point) {
-	halfWidth, halfHeight := size.X/2, size.Y/2
-	absX, absY := math.Abs(next.X-center.X), math.Abs(next.Y-center.Y)
+	halfWidth, halfHeight := float64(size.X/2), float64(size.Y/2)
+	deltaX := float64(next.X - center.X)
+	deltaY := float64(next.Y - center.Y)
+	absX, absY := math.Abs(deltaX), math.Abs(deltaY)
 	xScale, yScale := 1.0, 1.0
 	if absX > halfWidth {
-		xScale = halfWidth / absX
+		xScale = float64(halfWidth / absX)
 	}
 	if absY > halfHeight {
-		yScale = halfHeight / absY
+		yScale = float64(halfHeight / absY)
 	}
 	scale := math.Min(xScale, yScale)
-	center.X += scale * (next.X - center.X)
-	center.Y += scale * (next.Y - center.Y)
+	xOffset := float64(scale * deltaX)
+	yOffset := float64(scale * deltaY)
+	center.X = float64(center.X + xOffset)
+	center.Y = float64(center.Y + yOffset)
 }

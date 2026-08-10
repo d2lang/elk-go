@@ -15,10 +15,10 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
-// TestLayeredPolylineSelfLoopFrozen pins the exact ELK 0.8.1 polyline
-// self-loop result without requiring Node.js. In particular, the four corner
+// TestLayeredPolylineSelfLoopOfficial0120 pins the exact official elkjs 0.12.0
+// polyline self-loop result without requiring Node.js. In particular, the four corner
 // cuts distinguish PolylineSelfLoopRouter from its orthogonal skeleton.
-func TestLayeredPolylineSelfLoopFrozen(t *testing.T) {
+func TestLayeredPolylineSelfLoopOfficial0120(t *testing.T) {
 	var graph elk.Graph
 	if err := json.Unmarshal(polylineSelfLoopFixture, &graph); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestLayeredPolylineSelfLoopOracleParity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := oracle.Differential(ctx, runner, polylineSelfLoopFixture,
-		elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+		elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 		t.Fatalf("%v\ninput: %s", err, polylineSelfLoopFixture)
 	}
 }

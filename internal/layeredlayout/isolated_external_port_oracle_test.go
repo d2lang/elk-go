@@ -16,12 +16,12 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
-// TestLayeredIsolatedFixedSidePortFrozen pins ELK 0.8.1's parent-node
+// TestLayeredIsolatedFixedSidePortOfficial0120 pins official elkjs 0.12.0's parent-node
 // resizing behavior. An isolated fixed-side port does not become an external
 // port dummy, so ElkGraphLayoutTransferrer scales its side position when the
 // compound node changes size. Connected-component compaction must not affect
 // this transfer step.
-func TestLayeredIsolatedFixedSidePortFrozen(t *testing.T) {
+func TestLayeredIsolatedFixedSidePortOfficial0120(t *testing.T) {
 	for _, compaction := range []bool{false, true} {
 		t.Run(fmt.Sprintf("compaction-%t", compaction), func(t *testing.T) {
 			var graph elk.Graph
@@ -52,8 +52,7 @@ func TestLayeredIsolatedFixedSidePortFrozen(t *testing.T) {
 }
 
 // TestLayeredIsolatedFixedSidePortOracleParity compares both public
-// connected-component compaction values with the frozen elkjs 0.8.2 / ELK
-// 0.8.1 artifact.
+// connected-component compaction values with official elkjs 0.12.0.
 func TestLayeredIsolatedFixedSidePortOracleParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_LAYERED_STRATEGIES") != "1" {
 		t.Skip("set ELK_GO_ORACLE_LAYERED_STRATEGIES=1 to run Layered strategy differentials")
@@ -68,7 +67,7 @@ func TestLayeredIsolatedFixedSidePortOracleParity(t *testing.T) {
 			defer cancel()
 			fixture := isolatedFixedSidePortFixture(compaction)
 			if err := oracle.Differential(ctx, runner, fixture, elk.LayoutJSON,
-				oracle.DefaultTolerance); err != nil {
+				oracle.ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, fixture)
 			}
 		})

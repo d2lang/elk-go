@@ -41,9 +41,13 @@ func RemoveLabelDummies(arena *layered.LGraphArena, graphID layered.LGraphID) {
 			if labelsBelow {
 				labelPosition.Y += thickness + edgeLabelSpacing
 			}
-			spaceX := node.Size.X
-			spaceY := node.Size.Y - thickness - edgeLabelSpacing
 			represented := basegraph.Get(&node.Properties, layered.RepresentedLabels)
+			inline := representedLabelsAreInline(arena, represented)
+			spaceX := node.Size.X
+			spaceY := node.Size.Y
+			if !inline {
+				spaceY -= thickness + edgeLabelSpacing
+			}
 			if directionIsVertical(direction) {
 				placeVerticalCenterLabels(arena, represented, labelPosition.X, labelPosition.Y,
 					labelLabelSpacing, spaceY, labelsBelow, direction)
@@ -57,6 +61,18 @@ func RemoveLabelDummies(arena *layered.LGraphArena, graphID layered.LGraphID) {
 		}
 		arena.Layer(layerID).Nodes = retained
 	}
+}
+
+func representedLabelsAreInline(
+	arena *layered.LGraphArena,
+	labels []layered.LLabelID,
+) bool {
+	for _, labelID := range labels {
+		if !basegraph.Get(&arena.Label(labelID).Properties, layered.EdgeLabelsInline) {
+			return false
+		}
+	}
+	return true
 }
 
 func placeHorizontalCenterLabels(
@@ -79,13 +95,7 @@ func placeVerticalCenterLabels(
 	leftAligned bool,
 	direction layered.Direction,
 ) {
-	inline := true
-	for _, labelID := range labels {
-		if !basegraph.Get(&arena.Label(labelID).Properties, layered.EdgeLabelsInline) {
-			inline = false
-			break
-		}
-	}
+	inline := representedLabelsAreInline(arena, labels)
 	indices := make([]int, len(labels))
 	for index := range indices {
 		indices[index] = index

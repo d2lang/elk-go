@@ -858,8 +858,8 @@ func copyHierarchyLabelsBack(
 			continue
 		}
 		sourceGraph := arena.NodeGraph(arena.EdgeSourceNode(segment))
-		arena.Label(labelID).Position = arena.Label(labelID).Position.Add(
-			graphCoordinateOffset(arena, sourceGraph, referenceGraph))
+		arena.Label(labelID).Position = changeGraphCoordinates(
+			arena, arena.Label(labelID).Position, sourceGraph, referenceGraph)
 		arena.Edge(original).Labels = append(arena.Edge(original).Labels, labelID)
 	}
 	arena.Edge(segment).Labels = remaining
@@ -874,7 +874,49 @@ func portAbsoluteAnchor(arena *LGraphArena, portID LPortID) geometry.Point {
 }
 
 func graphCoordinateOffset(arena *LGraphArena, from, to LGraphID) geometry.Point {
-	return graphContentOrigin(arena, from).Sub(graphContentOrigin(arena, to))
+	return changeGraphCoordinates(arena, geometry.Point{}, from, to)
+}
+
+func changeGraphCoordinates(
+	arena *LGraphArena,
+	point geometry.Point,
+	from, to LGraphID,
+) geometry.Point {
+	// LGraphUtil.changeCoordSystem returns before doing any arithmetic when
+	// both coordinate systems are identical. Apart from avoiding needless
+	// work, that preserves the input's exact floating-point representation.
+	if from == to {
+		return point
+	}
+	// LGraphUtil.changeCoordSystem mutates the supplied vector while it walks
+	// the old hierarchy, then walks the new hierarchy and subtracts each term.
+	// Reconstructing two absolute origins and subtracting them is algebraically
+	// equivalent but changes the final ULP for fractional graph offsets, so
+	// preserve the Java/GWT evaluation order here.
+	result := point
+	for graphID := from; ; {
+		graph := arena.Graph(graphID)
+		result = result.Add(graph.Offset)
+		if graph.ParentNode == nil {
+			break
+		}
+		result = result.Add(geometry.Point{X: graph.Padding.Left, Y: graph.Padding.Top})
+		parent := *graph.ParentNode
+		result = result.Add(arena.Node(parent).Position)
+		graphID = arena.NodeGraph(parent)
+	}
+	for graphID := to; ; {
+		graph := arena.Graph(graphID)
+		result = result.Sub(graph.Offset)
+		if graph.ParentNode == nil {
+			break
+		}
+		result = result.Sub(geometry.Point{X: graph.Padding.Left, Y: graph.Padding.Top})
+		parent := *graph.ParentNode
+		result = result.Sub(arena.Node(parent).Position)
+		graphID = arena.NodeGraph(parent)
+	}
+	return result
 }
 
 func graphContentOrigin(arena *LGraphArena, graphID LGraphID) geometry.Point {

@@ -167,3 +167,34 @@ func TestNorthSouthPortSorterUsesFlowGroups(t *testing.T) {
 		t.Fatalf("sorted ports = %v, want %v", got, want)
 	}
 }
+
+func TestModelOrderNorthSouthInputReversingMatchesGuavaReverseView(t *testing.T) {
+	arena := layered.NewLGraphArena()
+	graphID := arena.AddGraph()
+	node := arena.AddNode(graphID)
+	remote := arena.AddNode(graphID)
+	in1, out1, in2, out2, unconnected :=
+		arena.AddPort(), arena.AddPort(), arena.AddPort(), arena.AddPort(), arena.AddPort()
+	for _, portID := range []layered.LPortID{in1, out1, in2, out2, unconnected} {
+		arena.SetPortNode(portID, &node)
+	}
+	remoteIn1, remoteOut1, remoteIn2, remoteOut2 :=
+		arena.AddPort(), arena.AddPort(), arena.AddPort(), arena.AddPort()
+	for _, portID := range []layered.LPortID{remoteIn1, remoteOut1, remoteIn2, remoteOut2} {
+		arena.SetPortNode(portID, &remote)
+	}
+	for _, endpoints := range [][2]layered.LPortID{
+		{remoteOut1, in1}, {out1, remoteIn1},
+		{remoteOut2, in2}, {out2, remoteIn2},
+	} {
+		edgeID := arena.AddEdge()
+		arena.SetEdgeSource(edgeID, &endpoints[0])
+		arena.SetEdgeTarget(edgeID, &endpoints[1])
+	}
+
+	input := []layered.LPortID{in1, out1, in2, out2, unconnected}
+	want := []layered.LPortID{unconnected, out2, out1, in1, in2}
+	if got := modelOrderNorthSouthInputReversing(arena, input); !reflect.DeepEqual(got, want) {
+		t.Fatalf("model-order north/south ports = %v, want %v", got, want)
+	}
+}

@@ -29,6 +29,7 @@ func copyTypedProperties(target *basegraph.PropertyMap, source *basegraph.Proper
 	setEnum(source, target, Layering, ParseLayeringStrategy)
 	setEnum(source, target, CrossingMinimization, parseCrossingMinimization)
 	setEnum(source, target, NodePlacement, parseNodePlacement)
+	setEnum(source, target, NetworkSimplexRecomputeNodePlacement, parseNodePlacement)
 	setEnum(source, target, NetworkSimplexNodeFlexibility, parseNodeFlexibility)
 	setEnum(source, target, NetworkSimplexNodeFlexibilityDefault, parseNodeFlexibility)
 	setEnum(source, target, BKFixedAlignment, parseFixedAlignment)
@@ -42,6 +43,11 @@ func copyTypedProperties(target *basegraph.PropertyMap, source *basegraph.Proper
 	setEnum(source, target, WrappingCuttingStrategy, parseCuttingStrategy)
 	setEnum(source, target, WrappingValidifyStrategy, parseValidifyStrategy)
 	setEnum(source, target, ConsiderModelOrder, parseOrderingStrategy)
+	setEnum(source, target, ComponentOrdering, parseComponentOrderingStrategy)
+	setEnum(source, target, LongEdgeOrdering, parseLongEdgeOrderingStrategy)
+	setEnum(source, target, CycleBreakingGroupOrder, parseGroupOrderStrategy)
+	setEnum(source, target, CrossingMinimizationGroupOrder, parseGroupOrderStrategy)
+	setEnum(source, target, LayerUnzippingStrategyOption, parseLayerUnzippingStrategy)
 	setEnum(source, target, GreedySwitch, parseGreedySwitch)
 	setEnum(source, target, GreedySwitchHierarchical, parseGreedySwitch)
 	setEnum(source, target, LayerConstraintOption, parseLayerConstraint)
@@ -71,6 +77,12 @@ func copyTypedProperties(target *basegraph.PropertyMap, source *basegraph.Proper
 	copyInt(source, target, NodePromotionMaxIterations)
 	copyInt(source, target, HighDegreeNodeThreshold)
 	copyInt(source, target, HighDegreeNodeTreeHeight)
+	copyInt(source, target, LayerUnzippingLayerSplit)
+	copyInt(source, target, CycleBreakingGroupID)
+	copyInt(source, target, CrossingMinimizationGroupID)
+	copyInt(source, target, ComponentGroupID)
+	copyInt(source, target, CycleBreakingPreferredSourceID)
+	copyInt(source, target, CycleBreakingPreferredTargetID)
 	copyInt(source, target, WrappingCuttingMSDFreedom)
 	copyBool(source, target, NoLayout)
 	copyBool(source, target, SeparateComponents)
@@ -84,6 +96,9 @@ func copyTypedProperties(target *basegraph.PropertyMap, source *basegraph.Proper
 	copyBool(source, target, MergeHierarchyEdges)
 	copyBool(source, target, UnnecessaryBendpoints)
 	copyBool(source, target, NoModelOrder)
+	copyBool(source, target, PortModelOrder)
+	copyBool(source, target, LayerUnzippingMinimizeEdgeLength)
+	copyBool(source, target, LayerUnzippingResetOnLongEdges)
 	copyBool(source, target, HighDegreeNodeTreatment)
 	copyBool(source, target, WrappingMultiEdgeImproveCuts)
 	copyBool(source, target, WrappingMultiEdgeImproveWrappedEdges)
@@ -101,6 +116,7 @@ func copyTypedProperties(target *basegraph.PropertyMap, source *basegraph.Proper
 		&SplineSloppyLayerSpacingFactor,
 		&WrappingAdditionalEdgeSpacing, &WrappingCorrectionFactor,
 		&WrappingMultiEdgeDistancePenalty,
+		&CrossingCounterNodeInfluence, &CrossingCounterPortInfluence,
 	} {
 		copyFloat(source, target, *property)
 	}
@@ -272,6 +288,8 @@ func parseCrossingMinimization(value string) (CrossingMinimizationStrategy, bool
 	switch strings.ToUpper(value) {
 	case "LAYER_SWEEP":
 		return CrossingMinimizationLayerSweep, true
+	case "MEDIAN_LAYER_SWEEP":
+		return CrossingMinimizationMedianLayerSweep, true
 	case "INTERACTIVE":
 		return CrossingMinimizationInteractive, true
 	case "NONE":
@@ -360,6 +378,8 @@ func parseSplineRoutingMode(value string) (SplineRoutingMode, bool) {
 		return SplineRoutingSloppy, true
 	case "CONSERVATIVE":
 		return SplineRoutingConservative, true
+	case "CONSERVATIVE_SOFT":
+		return SplineRoutingConservativeSoft, true
 	default:
 		return 0, false
 	}
@@ -399,12 +419,13 @@ func parseNodePromotionStrategy(value string) (NodePromotionStrategy, bool) {
 		NodePromotionNone, NodePromotionNikolov, NodePromotionNikolovPixel,
 		NodePromotionNikolovImproved, NodePromotionNikolovImprovedPixel,
 		NodePromotionDummyNodePercentage, NodePromotionNodeCountPercentage,
-		NodePromotionNoBoundary,
+		NodePromotionNoBoundary, NodePromotionModelOrderLeftToRight,
+		NodePromotionModelOrderRightToLeft,
 	}
 	names := []string{
 		"NONE", "NIKOLOV", "NIKOLOV_PIXEL", "NIKOLOV_IMPROVED",
 		"NIKOLOV_IMPROVED_PIXEL", "DUMMYNODE_PERCENTAGE", "NODECOUNT_PERCENTAGE",
-		"NO_BOUNDARY",
+		"NO_BOUNDARY", "MODEL_ORDER_LEFT_TO_RIGHT", "MODEL_ORDER_RIGHT_TO_LEFT",
 	}
 	for index, name := range names {
 		if strings.EqualFold(value, name) {
@@ -472,6 +493,60 @@ func parseOrderingStrategy(value string) (OrderingStrategy, bool) {
 		return OrderingNodesAndEdges, true
 	case "PREFER_EDGES":
 		return OrderingPreferEdges, true
+	case "PREFER_NODES":
+		return OrderingPreferNodes, true
+	default:
+		return 0, false
+	}
+}
+
+func parseLongEdgeOrderingStrategy(value string) (LongEdgeOrderingStrategy, bool) {
+	switch strings.ToUpper(value) {
+	case "DUMMY_NODE_OVER":
+		return LongEdgeDummyNodeOver, true
+	case "DUMMY_NODE_UNDER":
+		return LongEdgeDummyNodeUnder, true
+	case "EQUAL":
+		return LongEdgeEqual, true
+	default:
+		return 0, false
+	}
+}
+
+func parseComponentOrderingStrategy(value string) (ComponentOrderingStrategy, bool) {
+	switch strings.ToUpper(value) {
+	case "NONE":
+		return ComponentOrderingNone, true
+	case "INSIDE_PORT_SIDE_GROUPS":
+		return ComponentOrderingInsidePortSideGroups, true
+	case "GROUP_MODEL_ORDER":
+		return ComponentOrderingGroupModelOrder, true
+	case "MODEL_ORDER":
+		return ComponentOrderingModelOrder, true
+	default:
+		return 0, false
+	}
+}
+
+func parseGroupOrderStrategy(value string) (GroupOrderStrategy, bool) {
+	switch strings.ToUpper(value) {
+	case "ONLY_WITHIN_GROUP":
+		return GroupOrderOnlyWithinGroup, true
+	case "MODEL_ORDER":
+		return GroupOrderModelOrder, true
+	case "ENFORCED":
+		return GroupOrderEnforced, true
+	default:
+		return 0, false
+	}
+}
+
+func parseLayerUnzippingStrategy(value string) (LayerUnzippingStrategy, bool) {
+	switch strings.ToUpper(value) {
+	case "NONE":
+		return LayerUnzippingNone, true
+	case "ALTERNATING":
+		return LayerUnzippingAlternating, true
 	default:
 		return 0, false
 	}
@@ -563,6 +638,8 @@ func parseSelfLoopOrdering(value string) (SelfLoopOrderingStrategy, bool) {
 	switch strings.ToUpper(value) {
 	case "STACKED":
 		return SelfLoopOrderingStacked, true
+	case "REVERSE_STACKED":
+		return SelfLoopOrderingReverseStacked, true
 	case "SEQUENCED":
 		return SelfLoopOrderingSequenced, true
 	default:

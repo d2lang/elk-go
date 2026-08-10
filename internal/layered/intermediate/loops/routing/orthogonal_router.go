@@ -39,7 +39,7 @@ func RouteOrthogonal(arena *layered.LGraphArena, holder *loops.Holder) {
 			}
 		}
 		if loop.Labels != nil {
-			placeRoutedLabels(loop, slotPositions, edgeLabelDistance)
+			placeOrthogonalRoutedLabels(arena, loop, slotPositions, edgeLabelDistance)
 			updateMargins(node.Size, &newMargins, loop.Labels.Position)
 			updateMargins(node.Size, &newMargins, loop.Labels.Position.Add(loop.Labels.Size))
 		}
@@ -66,6 +66,18 @@ func computeEdgeRoutingDirection(arena *layered.LGraphArena, edge *loops.Edge) e
 		return clockwise
 	}
 	return counterClockwise
+}
+
+func placeOrthogonalRoutedLabels(
+	arena *layered.LGraphArena,
+	loop *loops.HyperLoop,
+	positions [5][]float64,
+	edgeLabelDistance float64,
+) {
+	if hasInlineLabels(arena, loop) {
+		edgeLabelDistance = 0
+	}
+	placeRoutedLabels(loop, positions, edgeLabelDistance)
 }
 
 func placeRoutedLabels(loop *loops.HyperLoop, positions [5][]float64, edgeLabelDistance float64) {
@@ -197,6 +209,12 @@ func addCornerBendPoints(
 ) geometry.Chain {
 	current := arena.Port(edge.Source.LPort).Side
 	target := arena.Port(edge.Target.LPort).Side
+	inline := edge.IsInline(arena) && edge.HyperLoop.Labels != nil
+	labelSide := edge.LabelSide()
+	labelSize := geometry.Point{}
+	if inline {
+		labelSize = edge.HyperLoop.Labels.Size
+	}
 	for current != target {
 		next := sideLeft(current)
 		if direction == clockwise {
@@ -204,10 +222,34 @@ func addCornerBendPoints(
 		}
 		currentPart := baseVector(current, edge.HyperLoop.RoutingSlot[current], positions)
 		nextPart := baseVector(next, edge.HyperLoop.RoutingSlot[next], positions)
+		if inline {
+			if current == labelSide {
+				adjustVectorForLabelSide(&currentPart, labelSide, labelSize)
+			} else if next == labelSide {
+				adjustVectorForLabelSide(&nextPart, labelSide, labelSize)
+			}
+		}
 		result = append(result, currentPart.Add(nextPart))
 		current = next
 	}
 	return result
+}
+
+func adjustVectorForLabelSide(
+	point *geometry.Point,
+	side layered.PortSide,
+	size geometry.Point,
+) {
+	switch side {
+	case layered.NorthSide:
+		point.Y -= size.Y / 2
+	case layered.SouthSide:
+		point.Y += size.Y / 2
+	case layered.WestSide:
+		point.X -= size.X / 2
+	case layered.EastSide:
+		point.X += size.X / 2
+	}
 }
 
 func baseVector(side layered.PortSide, slot int, positions [5][]float64) geometry.Point {

@@ -12,6 +12,7 @@ package nodespacing
 import (
 	"math"
 
+	"github.com/d2lang/elk-go/internal/basicoptions"
 	"github.com/d2lang/elk-go/internal/core"
 	"github.com/d2lang/elk-go/internal/geometry"
 	"github.com/d2lang/elk-go/internal/graph"
@@ -47,6 +48,12 @@ func ProcessNodeSize(
 	size := geometry.Point{X: node.Shape.Width, Y: node.Shape.Height}
 	constraints := graph.Get(&node.Properties, core.NodeSizeConstraints)
 	if len(constraints) != 0 && !(len(constraints) == 1 && constraints[0] == "PORT_LABELS") {
+		size = geometry.Point{}
+		if has(constraints, "NODE_LABELS") {
+			labelMinimum := insideNodeLabelMinimum(model, parent, nodeID)
+			size.X = math.Max(size.X, labelMinimum.X)
+			size.Y = math.Max(size.Y, labelMinimum.Y)
+		}
 		if has(constraints, "MINIMUM_SIZE") {
 			minimum := graph.Get(&node.Properties, core.NodeSizeMinimum)
 			if has(graph.Get(&node.Properties, NodeSizeOptions), "DEFAULT_MINIMUM_SIZE") {
@@ -57,8 +64,13 @@ func ProcessNodeSize(
 					minimum.Y = defaultMinimumHeight
 				}
 			}
-			size.X = math.Max(0, minimum.X)
-			size.Y = math.Max(0, minimum.Y)
+			size.X = math.Max(size.X, math.Max(0, minimum.X))
+			size.Y = math.Max(size.Y, math.Max(0, minimum.Y))
+		}
+		if graph.Get(&model.Node(parent).Properties, basicoptions.NodeSizeFixedGraphSize) ||
+			graph.Get(&model.Node(parent).Properties, core.TopdownLayout) {
+			size.X = math.Max(size.X, node.Shape.Width)
+			size.Y = math.Max(size.Y, node.Shape.Height)
 		}
 	}
 	if !apply {
@@ -69,6 +81,31 @@ func ProcessNodeSize(
 	placeFixedPorts(model, nodeID, size)
 	placeNodeLabels(model, nodeID, size)
 	return size
+}
+
+// insideNodeLabelMinimum is the 0.12 common node-micro-layout sizing path for
+// inside node labels. A single label cell is padded by spacing.labelNode on
+// all four sides; multiple cells contribute their bounding requirements.
+func insideNodeLabelMinimum(model *graph.Model, parent, nodeID graph.NodeID) geometry.Point {
+	node := model.Node(nodeID)
+	spacing := graph.Get(&node.Properties, SpacingLabelNode)
+	if !graph.Has(&node.Properties, SpacingLabelNode) {
+		spacing = graph.Get(&model.Node(parent).Properties, SpacingLabelNode)
+	}
+	result := geometry.Point{}
+	for _, labelID := range node.Labels {
+		label := model.Label(labelID)
+		placement := graph.Get(&node.Properties, NodeLabelsPlacement)
+		if individual, found := graph.TryGet(&label.Properties, NodeLabelsPlacement); found {
+			placement = individual
+		}
+		if has(placement, "OUTSIDE") {
+			continue
+		}
+		result.X = math.Max(result.X, label.Shape.Width+2*spacing)
+		result.Y = math.Max(result.Y, label.Shape.Height+2*spacing)
+	}
+	return result
 }
 
 func placeFixedPorts(model *graph.Model, nodeID graph.NodeID, size geometry.Point) {

@@ -101,13 +101,32 @@ func TestMakeLayerlessPreservesLayerAndNodeOrder(t *testing.T) {
 
 func TestComponentsProcessorSelectsExternalPortGraphPlacers(t *testing.T) {
 	tests := []struct {
-		name     string
-		ordering string
-		model    bool
+		name       string
+		ordering   layered.ComponentOrderingStrategy
+		groupModel bool
+		rowModel   bool
+		sector     bool
 	}{
-		{name: "sector placer", ordering: "NONE"},
-		{name: "inside-side model order", ordering: "INSIDE_PORT_SIDE_GROUPS"},
-		{name: "forced model order", ordering: "FORCE_MODEL_ORDER", model: true},
+		{
+			name:     "sector placer",
+			ordering: layered.ComponentOrderingNone,
+			sector:   true,
+		},
+		{
+			name:     "inside-side model order",
+			ordering: layered.ComponentOrderingInsidePortSideGroups,
+			sector:   true,
+		},
+		{
+			name:       "group model order",
+			ordering:   layered.ComponentOrderingGroupModelOrder,
+			groupModel: true,
+		},
+		{
+			name:     "row model order",
+			ordering: layered.ComponentOrderingModelOrder,
+			rowModel: true,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -116,7 +135,7 @@ func TestComponentsProcessorSelectsExternalPortGraphPlacers(t *testing.T) {
 			graph := arena.Graph(graphID)
 			basegraph.Set(&graph.Properties, layered.GraphProperties,
 				layered.GraphPropertyExternalPorts)
-			graph.Properties.SetRaw(componentOrderingPropertyID, test.ordering)
+			basegraph.Set(&graph.Properties, layered.ComponentOrdering, test.ordering)
 
 			external := addComponentNode(arena, graphID)
 			arena.Node(external).Type = layered.ExternalPortNode
@@ -132,10 +151,16 @@ func TestComponentsProcessorSelectsExternalPortGraphPlacers(t *testing.T) {
 			if len(components) != 2 {
 				t.Fatalf("components = %v, want two", components)
 			}
-			_, isModel := processor.graphPlacer.(*componentGroupModelOrderGraphPlacer)
+			_, isGroupModel := processor.graphPlacer.(*componentGroupModelOrderGraphPlacer)
 			_, isSector := processor.graphPlacer.(*componentGroupGraphPlacer)
-			if isModel != test.model || isSector == test.model {
-				t.Fatalf("placer = %T, model=%v", processor.graphPlacer, test.model)
+			row, isRow := processor.graphPlacer.(*simpleRowGraphPlacer)
+			isRowModel := isRow && row.modelOrder
+			if isGroupModel != test.groupModel || isSector != test.sector ||
+				isRowModel != test.rowModel {
+				t.Fatalf(
+					"placer = %T, group model=%v sector=%v row model=%v",
+					processor.graphPlacer, test.groupModel, test.sector, test.rowModel,
+				)
 			}
 		})
 	}

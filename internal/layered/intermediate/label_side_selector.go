@@ -309,8 +309,11 @@ func applyLabelDummySide(
 	if effective == layered.LabelSideAbove {
 		portY = dummy.Size.Y - math.Ceil(thickness/2)
 	} else {
-		dummy.Size.Y -= basegraph.Get(&arena.Graph(graphID).Properties, layered.SpacingEdgeLabel)
-		portY = (dummy.Size.Y - math.Ceil(thickness)) / 2
+		edgeLabelSpacing := basegraph.Get(
+			&arena.Graph(graphID).Properties, layered.SpacingEdgeLabel)
+		portY = math.Ceil(dummy.Size.Y-edgeLabelSpacing-thickness) / 2
+		dummy.Size.Y -= edgeLabelSpacing
+		dummy.Size.Y -= thickness
 	}
 	for _, portID := range dummy.Ports {
 		arena.Port(portID).Position.Y = portY

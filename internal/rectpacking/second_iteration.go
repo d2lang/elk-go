@@ -424,7 +424,7 @@ func (row *rectRow) expand(model *graph.Model, width, additionalHeight float64) 
 	}
 }
 
-func initialPlacement(model *graph.Model, rectangles []graph.NodeID, width, spacing float64) []*rectRow {
+func initialPlacement(model *graph.Model, rectangles []graph.NodeID, width, spacing float64, rowHeightReevaluation bool) []*rectRow {
 	rows := make([]*rectRow, 0)
 	row := newRectRow(0, spacing)
 	row.add(newBlock(model, 0, 0, row, spacing))
@@ -436,7 +436,7 @@ func initialPlacement(model *graph.Model, rectangles []graph.NodeID, width, spac
 		if len(row.blocks[0].children) > 0 {
 			potential += spacing
 		}
-		if potential > width {
+		if potential > width || graph.Get(&node.Properties, InNewRow) {
 			currentWidth = 0
 			drawingHeight += row.height + spacing
 			rows = append(rows, row)
@@ -444,7 +444,7 @@ func initialPlacement(model *graph.Model, rectangles []graph.NodeID, width, spac
 			value = newBlock(model, 0, row.y, row, spacing)
 			row.add(value)
 		}
-		if len(value.children) == 0 || similarHeight(model, value, id) {
+		if len(value.children) == 0 || !rowHeightReevaluation && similarHeight(model, value, id) {
 			value.add(id)
 		} else {
 			value = newBlock(model, value.x+value.width+spacing, row.y, row, spacing)
@@ -476,59 +476,214 @@ func placeRectInBlock(row *rectRow, value *block, id graph.NodeID, width, spacin
 		return true
 	}
 	if value.x+node.Shape.Width <= width &&
-		(value.y+value.height+node.Shape.Height+spacing <= row.height || len(row.blocks) == 1) {
+		value.y+value.height+node.Shape.Height+spacing <= row.y+row.height {
 		value.addNewRow(id)
 		return true
 	}
 	return false
 }
 
-func placeAndCompact(model *graph.Model, rectangles []graph.NodeID, maxWidth float64, minimum geometry.Point, padding geometry.Spacing, spacing, dar float64, expandNodes, expandToAspect, compactRows bool) drawingData {
-	rows := initialPlacement(model, rectangles, maxWidth, spacing)
-	if compactRows {
-		for index := 0; index < len(rows); index++ {
-			row := rows[index]
-			if index > 0 {
-				row.setY(rows[index-1].y + rows[index-1].height + spacing)
-			}
-			compact(index, &rows, maxWidth, spacing)
-			adjustRow(row, spacing)
-		}
-	} else {
-		for _, row := range rows {
-			for _, value := range row.blocks {
-				stack := newBlockStack(value.x, value.y, spacing)
-				stack.add(value)
-				row.stacks = append(row.stacks, stack)
-			}
-		}
+func resetCoordinates(model *graph.Model, rectangles []graph.NodeID) {
+	for _, id := range rectangles {
+		model.Node(id).Shape.SetLocation(0, 0)
 	}
-	drawingWidth, drawingHeight := 0.0, 0.0
+}
+
+func rectangleDimensions(model *graph.Model, rectangles []graph.NodeID) geometry.Point {
+	result := geometry.Point{}
+	for _, id := range rectangles {
+		node := model.Node(id)
+		result.X = math.Max(result.X, node.Shape.X+node.Shape.Width)
+		result.Y = math.Max(result.Y, node.Shape.Y+node.Shape.Height)
+	}
+	return result
+}
+
+func rowsDimensions(rows []*rectRow, spacing float64) geometry.Point {
+	result := geometry.Point{}
 	for index, row := range rows {
-		drawingWidth = math.Max(drawingWidth, row.width)
+		result.X = math.Max(result.X, row.width)
 		if index > 0 {
-			drawingHeight += spacing
+			result.Y += spacing
 		}
-		drawingHeight += row.height
+		result.Y += row.height
 	}
-	totalWidth := math.Max(drawingWidth, minimum.X-padding.Horizontal())
-	minHeight := math.Max(drawingHeight, minimum.Y-padding.Vertical())
-	additionalHeight := minHeight - drawingHeight
-	if expandNodes && expandToAspect {
-		if totalWidth/minHeight < dar {
-			totalWidth = minHeight * dar
+	return result
+}
+
+func rowsHeight(rows []*rectRow, spacing float64) float64 {
+	return rowsDimensions(rows, spacing).Y
+}
+
+func finishPacking(size, minimum geometry.Point, padding geometry.Spacing, dar float64) drawingData {
+	width := math.Max(size.X, minimum.X-padding.Horizontal())
+	height := math.Max(size.Y, minimum.Y-padding.Vertical())
+	additionalHeight := height - size.Y
+	// SimplePlacement and NoPlacement in ELK 0.12 assign height plus the
+	// additional height. The compactor uses size.y + additionalHeight, which
+	// is simply height; callers select the appropriate behavior below.
+	drawing := newDrawing(dar, width, height+additionalHeight, wholeDrawing, 0, 0)
+	drawing.additionalHeight = additionalHeight
+	return drawing
+}
+
+func simplePlacement(
+	model *graph.Model,
+	rectangles []graph.NodeID,
+	targetWidth float64,
+	minimum geometry.Point,
+	padding geometry.Spacing,
+	spacing, dar float64,
+) (drawingData, []*rectRow) {
+	resetCoordinates(model, rectangles)
+	rows := initialPlacement(model, rectangles, targetWidth, spacing, false)
+	for _, row := range rows {
+		for _, value := range row.blocks {
+			stack := newBlockStack(value.x, value.y, spacing)
+			stack.add(value)
+			row.stacks = append(row.stacks, stack)
+		}
+	}
+	return finishPacking(rowsDimensions(rows, spacing), minimum, padding, dar), rows
+}
+
+func noPlacement(
+	model *graph.Model,
+	rectangles []graph.NodeID,
+	minimum geometry.Point,
+	padding geometry.Spacing,
+	dar float64,
+) drawingData {
+	return finishPacking(rectangleDimensions(model, rectangles), minimum, padding, dar)
+}
+
+func compactPlacement(
+	model *graph.Model,
+	rectangles []graph.NodeID,
+	targetWidth float64,
+	minimum geometry.Point,
+	padding geometry.Spacing,
+	spacing, dar float64,
+	rowHeightReevaluation bool,
+	iterations int,
+) (drawingData, []*rectRow) {
+	drawing, rows, changes := compactOnce(
+		model, rectangles, targetWidth, minimum, padding, spacing, dar, rowHeightReevaluation,
+	)
+	for iterations > 1 {
+		positions := make([]geometry.Rectangle, len(rectangles))
+		for index, id := range rectangles {
+			positions[index] = model.Node(id).Shape.Rectangle()
+		}
+
+		candidateWidth := targetWidth
+		ratio := (drawing.width + padding.Horizontal()) / (drawing.height + padding.Vertical())
+		if len(rectangles) > 1 && !math.IsInf(changes.minIncrease, 1) && ratio < dar {
+			candidateWidth = targetWidth + changes.minIncrease
+		} else if len(rectangles) > 1 && !math.IsInf(changes.minDecrease, 1) && ratio > dar {
+			candidateWidth = math.Max(minimum.X, targetWidth-changes.minDecrease)
+		}
+
+		candidate, candidateRows, candidateChanges := compactOnce(
+			model, rectangles, candidateWidth, minimum, padding, spacing, dar, rowHeightReevaluation,
+		)
+		if candidate.scale >= drawing.scale && !math.IsNaN(candidate.scale) {
+			drawing, rows, changes = candidate, candidateRows, candidateChanges
 		} else {
-			additionalHeight += totalWidth/dar - minHeight
+			for index, id := range rectangles {
+				node := model.Node(id)
+				position := positions[index]
+				node.Shape.SetLocation(position.X, position.Y)
+				node.Shape.SetDimensions(position.Width, position.Height)
+			}
+		}
+		iterations--
+	}
+	return drawing, rows
+}
+
+type rowWidthChanges struct {
+	minIncrease, maxIncrease float64
+	minDecrease, maxDecrease float64
+}
+
+func compactOnce(
+	model *graph.Model,
+	rectangles []graph.NodeID,
+	targetWidth float64,
+	minimum geometry.Point,
+	padding geometry.Spacing,
+	spacing, dar float64,
+	rowHeightReevaluation bool,
+) (drawingData, []*rectRow, rowWidthChanges) {
+	resetCoordinates(model, rectangles)
+	rows := initialPlacement(model, rectangles, targetWidth, spacing, rowHeightReevaluation)
+	changes := rowWidthChanges{minIncrease: math.Inf(1), minDecrease: math.Inf(1)}
+	for index := 0; index < len(rows); index++ {
+		row := rows[index]
+		if index > 0 {
+			row.setY(rows[index-1].y + rows[index-1].height + spacing)
+		}
+		_, repeat := compact(index, &rows, targetWidth, spacing, rowHeightReevaluation)
+		if repeat {
+			for _, value := range row.blocks {
+				value.fixed = false
+				value.positionFixed = false
+				value.adjustRemove()
+			}
+			row.stacks = nil
+			row.width = targetWidth
+			index--
+			continue
+		}
+		adjustRow(row, spacing)
+		if index+1 < len(rows) {
+			increase := row.width + spacing + rows[index+1].blocks[0].width - targetWidth
+			// Preserve ELK 0.12's observable update order, including the two
+			// cross-field references in RowFillingAndCompaction.
+			changes.maxIncrease = math.Max(increase, changes.maxDecrease)
+			changes.minIncrease = math.Min(increase, changes.minDecrease)
+			if len(row.stacks) != 0 {
+				decrease := row.stacks[len(row.stacks)-1].width
+				if len(row.stacks) > 1 {
+					decrease += spacing
+				}
+				changes.maxDecrease = math.Max(changes.maxDecrease, decrease)
+				changes.minDecrease = math.Min(changes.maxDecrease, decrease)
+			}
 		}
 	}
-	if expandNodes {
-		perRow := additionalHeight / float64(len(rows))
-		for index, row := range rows {
-			row.setY(row.y + perRow*float64(index))
-			row.expand(model, totalWidth, perRow)
+	if len(rows) == 1 && len(rows[0].stacks) != 0 {
+		lastStack := rows[0].stacks[len(rows[0].stacks)-1]
+		if len(lastStack.blocks) != 0 {
+			lastBlock := lastStack.blocks[len(lastStack.blocks)-1]
+			for _, blockRow := range lastBlock.rows {
+				decrease := lastBlock.width - blockRow.width
+				changes.maxDecrease = math.Max(changes.maxDecrease, decrease)
+				changes.minDecrease = math.Min(changes.minDecrease, decrease)
+				increase := blockRow.width + spacing
+				changes.maxIncrease = math.Max(changes.maxIncrease, increase)
+				changes.minIncrease = math.Min(changes.minIncrease, increase)
+			}
 		}
 	}
-	return newDrawing(dar, totalWidth, drawingHeight+additionalHeight, wholeDrawing, 0, 0)
+	size := rowsDimensions(rows, spacing)
+	width := math.Max(size.X, minimum.X-padding.Horizontal())
+	height := math.Max(size.Y, minimum.Y-padding.Vertical())
+	drawing := newDrawing(dar, width, height, wholeDrawing, 0, 0)
+	drawing.additionalHeight = height - size.Y
+	return drawing, rows, changes
+}
+
+func expandRows(model *graph.Model, rows []*rectRow, width, additionalHeight float64) {
+	if len(rows) == 0 {
+		return
+	}
+	perRow := additionalHeight / float64(len(rows))
+	for index, row := range rows {
+		row.setY(row.y + perRow*float64(index))
+		row.expand(model, width, perRow)
+	}
 }
 
 func adjustRow(row *rectRow, spacing float64) {
@@ -553,8 +708,9 @@ func nextBlock(rows []*rectRow, row *rectRow, blockIndex, nextRowIndex int) *blo
 	return nil
 }
 
-func compact(rowIndex int, rows *[]*rectRow, width, spacing float64) bool {
+func compact(rowIndex int, rows *[]*rectRow, width, spacing float64, rowHeightReevaluation bool) (bool, bool) {
 	changed := false
+	compactAgain := false
 	nextRowIndex := rowIndex + 1
 	row := (*rows)[rowIndex]
 	var currentStack *blockStack
@@ -586,10 +742,15 @@ func compact(rowIndex int, rows *[]*rectRow, width, spacing float64) bool {
 		next := nextBlock(*rows, row, blockIndex, nextRowIndex)
 		fromNext := next != nil && next.parent != row
 		if next != nil {
-			if len(next.children) > 0 {
+			if len(next.children) > 0 && !graph.Get(&modelNode(next).Properties, InNewRow) {
 				value.placeIn(width - value.x)
+				value.stack.update()
 				changed = absorb(row, value, next, width, spacing) || changed
 			} else {
+				// ELK 0.12 takes this branch both for an empty next block and
+				// for an inNewRow boundary. It calls remove on the current row
+				// even when the block belongs to the following row, then stops
+				// compacting this row.
 				row.remove(next)
 				break
 			}
@@ -606,13 +767,22 @@ func compact(rowIndex int, rows *[]*rectRow, width, spacing float64) bool {
 				blockIndex--
 				continue
 			}
-			if placeBelow(rows, row, value, next, fromNext, width, nextRowIndex, spacing) {
+			if !graph.Get(&modelNode(next).Properties, InNewRow) &&
+				placeBelow(rows, row, value, next, fromNext, width, nextRowIndex, spacing) {
 				changed = true
 				continue
 			}
 			if fromNext {
-				if placeBeside(rows, row, value, next, width, nextRowIndex, spacing) {
+				oldHeight := row.height
+				nextMinHeight := next.minHeight
+				if !graph.Get(&modelNode(next).Properties, InNewRow) &&
+					placeBeside(rows, row, value, next, width, nextRowIndex, spacing, rowHeightReevaluation) {
 					changed = true
+					if oldHeight < nextMinHeight {
+						compactAgain = true
+						next.parent = row
+						break
+					}
 					continue
 				}
 				if useRowHeight(row, value) {
@@ -639,7 +809,11 @@ func compact(rowIndex int, rows *[]*rectRow, width, spacing float64) bool {
 			value.stack.update()
 		}
 	}
-	return changed
+	return changed, compactAgain
+}
+
+func modelNode(value *block) *graph.Node {
+	return value.model.Node(value.children[0])
 }
 
 func useRowHeight(row *rectRow, value *block) bool {
@@ -658,6 +832,9 @@ func absorb(row *rectRow, value, next *block, width, spacing float64) bool {
 	changed := false
 	for len(next.children) > 0 {
 		id := next.children[0]
+		if graph.Get(&next.model.Node(id).Properties, InNewRow) {
+			break
+		}
 		if !placeRectInBlock(row, value, id, width, spacing) {
 			break
 		}
@@ -703,15 +880,26 @@ func placeBelow(rows *[]*rectRow, row *rectRow, value, next *block, fromNext boo
 	return true
 }
 
-func placeBeside(rows *[]*rectRow, row *rectRow, value, next *block, width float64, nextRowIndex int, spacing float64) bool {
+func placeBeside(rows *[]*rectRow, row *rectRow, value, next *block, width float64, nextRowIndex int, spacing float64, rowHeightReevaluation bool) bool {
 	currentMinWidth := value.stack.widthForHeight(row.y + row.height - value.stack.y)
+	shouldReevaluate := next.minHeight > row.height && rowHeightReevaluation
 	targetNext := width - (value.stack.x + currentMinWidth - spacing)
+	nextHeight := next.heightForWidth(targetNext)
+	if shouldReevaluate && nextHeight > next.minHeight {
+		return false
+	}
+	if shouldReevaluate {
+		potentialWidth := 0.0
+		for _, stack := range row.stacks {
+			potentialWidth += stack.widthForHeight(next.minHeight) + spacing
+		}
+		targetNext = width - potentialWidth
+	}
 	if targetNext < next.minWidth {
 		return false
 	}
 	lastRowOptimization := nextRowIndex == len(*rows)-1 && targetNext >= (*rows)[nextRowIndex].width
-	nextHeight := next.heightForWidth(targetNext)
-	if nextHeight > row.height && !lastRowOptimization {
+	if !shouldReevaluate && nextHeight > row.height && !lastRowOptimization {
 		return false
 	}
 	if lastRowOptimization && nextHeight > row.height {

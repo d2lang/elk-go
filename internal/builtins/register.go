@@ -6,13 +6,12 @@
 //
 // SPDX-License-Identifier: EPL-2.0
 
-// Package builtins registers the layout providers compiled into ELK.js 0.8.2.
+// Package builtins registers the layout providers compiled into ELK.js 0.12.0.
 package builtins
 
 import (
 	"github.com/d2lang/elk-go/internal/basic"
 	"github.com/d2lang/elk-go/internal/core"
-	"github.com/d2lang/elk-go/internal/disco"
 	"github.com/d2lang/elk-go/internal/force"
 	"github.com/d2lang/elk-go/internal/layered"
 	"github.com/d2lang/elk-go/internal/layeredlayout"
@@ -32,14 +31,13 @@ func RegisterOptions(registry *core.OptionRegistry) {
 	stress.RegisterOptions(registry)
 	mrtree.RegisterOptions(registry)
 	radial.RegisterOptions(registry)
-	disco.RegisterOptions(registry)
 	spore.RegisterOptions(registry)
 	rectpacking.RegisterOptions(registry)
-	registerFrozenCompatibilityOptions(registry)
+	registerCompatibilityOptions(registry)
 }
 
-// Register installs algorithms in the same relative order as the frozen
-// ELK.js 0.8.2 registry. That order is observable during suffix resolution.
+// Register installs algorithms in the same relative order as the official
+// ELK.js 0.12.0 registry. That order is observable during suffix resolution.
 func Register(registry *core.AlgorithmRegistry) error {
 	for _, register := range []func(*core.AlgorithmRegistry) error{
 		basic.Register,
@@ -48,7 +46,6 @@ func Register(registry *core.AlgorithmRegistry) error {
 		mrtree.Register,
 		radial.Register,
 		force.Register,
-		disco.Register,
 		spore.Register,
 		rectpacking.Register,
 	} {

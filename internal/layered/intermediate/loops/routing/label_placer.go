@@ -37,7 +37,7 @@ func PlaceLabels(arena *layered.LGraphArena, holder *loops.Holder) error {
 		case loops.TwoSidesCorner:
 			assignTwoSidesCorner(arena, loop)
 		case loops.TwoSidesOpposing, loops.ThreeSides:
-			assignOpposingAndThree(loop)
+			assignOpposingAndThree(arena, loop)
 		case loops.FourSides:
 			assignFourSides(arena, loop)
 		default:
@@ -59,6 +59,7 @@ func PlaceLabels(arena *layered.LGraphArena, holder *loops.Holder) error {
 }
 
 func assignOneSidedSimple(arena *layered.LGraphArena, loop *loops.HyperLoop, side layered.PortSide) {
+	clearInlineLabels(arena, loop)
 	switch side {
 	case layered.EastSide, layered.WestSide:
 		topmost := loop.LeftmostPort
@@ -105,6 +106,7 @@ func assignOneSidedSequenced(
 }
 
 func assignTwoSidesCorner(arena *layered.LGraphArena, loop *loops.HyperLoop) {
+	clearInlineLabels(arena, loop)
 	leftSide := arena.Port(loop.LeftmostPort.LPort).Side
 	rightSide := arena.Port(loop.RightmostPort.LPort).Side
 	switch {
@@ -119,21 +121,31 @@ func assignTwoSidesCorner(arena *layered.LGraphArena, loop *loops.HyperLoop) {
 	}
 }
 
-func assignOpposingAndThree(loop *loops.HyperLoop) {
+func assignOpposingAndThree(arena *layered.LGraphArena, loop *loops.HyperLoop) {
 	sides := loop.OccupiedSides
+	inline := hasInlineLabels(arena, loop)
 	switch {
 	case !sides[layered.NorthSide]:
 		assignLabel(loop, layered.SouthSide, loops.LabelCenter, nil)
 	case !sides[layered.SouthSide]:
 		assignLabel(loop, layered.NorthSide, loops.LabelCenter, nil)
 	case !sides[layered.WestSide]:
-		assignLabel(loop, layered.NorthSide, loops.LabelLeft, loop.LeftmostPort)
+		if inline {
+			assignLabel(loop, layered.EastSide, loops.LabelCenter, nil)
+		} else {
+			assignLabel(loop, layered.NorthSide, loops.LabelLeft, loop.LeftmostPort)
+		}
 	case !sides[layered.EastSide]:
-		assignLabel(loop, layered.NorthSide, loops.LabelRight, loop.RightmostPort)
+		if inline {
+			assignLabel(loop, layered.WestSide, loops.LabelCenter, nil)
+		} else {
+			assignLabel(loop, layered.NorthSide, loops.LabelRight, loop.RightmostPort)
+		}
 	}
 }
 
 func assignFourSides(arena *layered.LGraphArena, loop *loops.HyperLoop) {
+	clearInlineLabels(arena, loop)
 	leftSide := arena.Port(loop.LeftmostPort.LPort).Side
 	// ELK 0.8.1 reads leftmost twice here. Keep the typo for elkjs parity.
 	rightSide := arena.Port(loop.LeftmostPort.LPort).Side
@@ -141,6 +153,27 @@ func assignFourSides(arena *layered.LGraphArena, loop *loops.HyperLoop) {
 		assignLabel(loop, layered.SouthSide, loops.LabelCenter, nil)
 	} else {
 		assignLabel(loop, layered.NorthSide, loops.LabelCenter, nil)
+	}
+}
+
+func hasInlineLabels(arena *layered.LGraphArena, loop *loops.HyperLoop) bool {
+	if loop.Labels == nil {
+		return false
+	}
+	for _, labelID := range loop.Labels.LLabels {
+		if basegraph.Get(&arena.Label(labelID).Properties, layered.EdgeLabelsInline) {
+			return true
+		}
+	}
+	return false
+}
+
+func clearInlineLabels(arena *layered.LGraphArena, loop *loops.HyperLoop) {
+	if loop.Labels == nil {
+		return
+	}
+	for _, labelID := range loop.Labels.LLabels {
+		basegraph.Unset(&arena.Label(labelID).Properties, layered.EdgeLabelsInline)
 	}
 }
 

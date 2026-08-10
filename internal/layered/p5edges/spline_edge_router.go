@@ -103,7 +103,8 @@ func (*SplineEdgeRouter) Process(arena *layered.LGraphArena, graphID layered.LGr
 		return nil
 	}
 	mode := basegraph.Get(&graph.Properties, layered.SplineRoutingModeOption)
-	if mode != layered.SplineRoutingSloppy && mode != layered.SplineRoutingConservative {
+	if mode != layered.SplineRoutingSloppy && mode != layered.SplineRoutingConservative &&
+		mode != layered.SplineRoutingConservativeSoft {
 		return fmt.Errorf("layered: spline routing mode %v is not implemented", mode)
 	}
 
@@ -529,7 +530,7 @@ func writeSplineControls(
 	controls := make(geometry.Chain, 0, 4)
 	if segment.straight {
 		controls = append(controls, geometry.Point{X: centerX, Y: segment.centerY})
-	} else if mode == layered.SplineRoutingConservative ||
+	} else if mode != layered.SplineRoutingSloppy ||
 		arena.Port(*edge.Source).Side == layered.WestSide ||
 		arena.Port(*edge.Target).Side == layered.EastSide {
 		routingX := segment.boundingX

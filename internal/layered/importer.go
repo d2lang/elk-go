@@ -11,7 +11,6 @@ package layered
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/d2lang/elk-go/internal/common/nodespacing"
 	"github.com/d2lang/elk-go/internal/core"
@@ -446,7 +445,7 @@ func (importer *ElkGraphImporter) importNodes(
 		}
 
 		lnode := importer.transformNode(arena, nodeID, parentGraph)
-		if needsModelOrder(arena.Graph(topGraph)) &&
+		if needsModelOrder(arena.Graph(parentGraph)) &&
 			!basegraph.Get(&node.Properties, NoModelOrder) {
 			basegraph.Set(&arena.Node(lnode).Properties, ModelOrder, modelOrder)
 			modelOrder++
@@ -489,11 +488,16 @@ func (importer *ElkGraphImporter) transformNode(
 		importer.addGraphProperty(arena, graphID, GraphPropertyNonFreePorts)
 	}
 	direction := basegraph.Get(&arena.Graph(graphID).Properties, DirectionOption)
-	for _, portID := range original.Ports {
+	assignPortModelOrder := needsModelOrder(arena.Graph(graphID)) &&
+		!basegraph.Get(&original.Properties, NoModelOrder)
+	for portModelOrder, portID := range original.Ports {
 		if basegraph.Get(&importer.Model.Port(portID).Properties, core.NoLayout) {
 			continue
 		}
-		importer.transformPort(arena, portID, lnodeID, graphID, direction, constraints)
+		lportID := importer.transformPort(arena, portID, lnodeID, graphID, direction, constraints)
+		if assignPortModelOrder {
+			basegraph.Set(&arena.Port(lportID).Properties, ModelOrder, portModelOrder)
+		}
 	}
 	for _, labelID := range original.Labels {
 		label := importer.Model.Label(labelID)
@@ -829,15 +833,19 @@ func (importer *ElkGraphImporter) addGraphProperty(arena *LGraphArena, graphID L
 
 func needsModelOrder(graph *LGraph) bool {
 	cycle := basegraph.Get(&graph.Properties, CycleBreaking)
-	componentOrder := false
-	if value, found := graph.Properties.Raw(
-		"org.eclipse.elk.layered.considerModelOrder.components",
-	); found {
-		componentOrder = !strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "NONE")
-	}
+	layering := basegraph.Get(&graph.Properties, Layering)
+	promotion := basegraph.Get(&graph.Properties, NodePromotionStrategyOption)
 	return basegraph.Get(&graph.Properties, ConsiderModelOrder) != OrderingNone ||
 		cycle == CycleBreakingModelOrder || cycle == CycleBreakingGreedyModelOrder ||
-		basegraph.Get(&graph.Properties, ForceNodeModelOrder) || componentOrder
+		cycle == CycleBreakingSCCConnectivity || cycle == CycleBreakingSCCNodeType ||
+		cycle == CycleBreakingDFSNodeOrder || cycle == CycleBreakingBFSNodeOrder ||
+		layering == LayeringBreadthFirstModelOrder || layering == LayeringDepthFirstModelOrder ||
+		promotion == NodePromotionModelOrderLeftToRight ||
+		promotion == NodePromotionModelOrderRightToLeft ||
+		basegraph.Get(&graph.Properties, ForceNodeModelOrder) ||
+		basegraph.Get(&graph.Properties, ComponentOrdering) != ComponentOrderingNone ||
+		basegraph.Get(&graph.Properties, CrossingCounterNodeInfluence) != 0 ||
+		basegraph.Get(&graph.Properties, CrossingCounterPortInfluence) != 0
 }
 
 func baseHierarchy(node *basegraph.Node) HierarchyHandling {

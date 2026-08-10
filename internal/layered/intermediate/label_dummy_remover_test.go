@@ -76,3 +76,40 @@ func TestVerticalCenterLabelPlacementReversesUpOrder(t *testing.T) {
 		t.Fatalf("first (second placed) = %v, want (33,28)", got)
 	}
 }
+
+func TestRemoveInlineLabelUsesNormalizedDummyHeight(t *testing.T) {
+	arena := layered.NewLGraphArena()
+	graphID := arena.AddGraph()
+	graph := arena.Graph(graphID)
+	basegraph.Set(&graph.Properties, layered.DirectionOption, layered.DirectionDown)
+	basegraph.Set(&graph.Properties, layered.SpacingEdgeLabel, 2.0)
+	source, target := arena.AddNode(graphID), arena.AddNode(graphID)
+	graph.LayerlessNodes = []layered.LNodeID{source, target}
+	sourcePort, targetPort := arena.AddPort(), arena.AddPort()
+	arena.SetPortNode(sourcePort, &source)
+	arena.SetPortNode(targetPort, &target)
+	edgeID := arena.AddEdge()
+	arena.SetEdgeSource(edgeID, &sourcePort)
+	arena.SetEdgeTarget(edgeID, &targetPort)
+	labelID := arena.AddLabel("inline")
+	arena.Label(labelID).Size = geometry.Point{X: 10, Y: 4}
+	basegraph.Set(&arena.Label(labelID).Properties,
+		layered.EdgeLabelsPlacement, layered.EdgeLabelPlacementCenter)
+	basegraph.Set(&arena.Label(labelID).Properties, layered.EdgeLabelsInline, true)
+	arena.Edge(edgeID).Labels = []layered.LLabelID{labelID}
+
+	InsertLabelDummies(arena, graphID)
+	dummyID := graph.LayerlessNodes[2]
+	layerID := arena.AddLayerToGraph(graphID)
+	arena.SetNodeLayer(dummyID, &layerID)
+	arena.Node(dummyID).Position = geometry.Point{X: 100, Y: 30}
+	applyLabelDummySide(arena, graphID, dummyID, layered.LabelSideAbove)
+	if got := arena.Node(dummyID).Size.Y; got != 4 {
+		t.Fatalf("normalized dummy height = %v, want 4", got)
+	}
+
+	RemoveLabelDummies(arena, graphID)
+	if got, want := arena.Label(labelID).Position, (geometry.Point{X: 100, Y: 30}); got != want {
+		t.Fatalf("inline label position = %v, want %v", got, want)
+	}
+}

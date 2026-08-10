@@ -46,8 +46,7 @@ func InsertBreakingPoints(arena *layered.LGraphArena, graphID layered.LGraphID) 
 	var calculator cutIndexCalculator
 	switch basegraph.Get(&graph.Properties, layered.WrappingCuttingStrategy) {
 	case layered.CuttingManual:
-		// ELK 0.8.1's switch intentionally falls through from MANUAL to ARD.
-		calculator = ardCutIndexHeuristic{}
+		calculator = manualCutIndexCalculator{}
 	case layered.CuttingARD:
 		calculator = ardCutIndexHeuristic{}
 	default:
@@ -143,6 +142,13 @@ func applyCuts(arena *layered.LGraphArena, graphID layered.LGraphID, cuts []int)
 				startEndEdge := arena.AddEdge()
 				arena.SetEdgeSource(startEndEdge, &startOut)
 				arena.SetEdgeTarget(startEndEdge, &endIn)
+				if modelOrder, found := basegraph.TryGet(
+					&arena.Edge(originalEdge).Properties,
+					layered.ModelOrder,
+				); found {
+					basegraph.Set(&arena.Edge(nodeStartEdge).Properties, layered.ModelOrder, modelOrder)
+					basegraph.Set(&arena.Edge(startEndEdge).Properties, layered.ModelOrder, modelOrder)
+				}
 				arena.SetEdgeSource(originalEdge, &endOut)
 
 				info := &BPInfo{

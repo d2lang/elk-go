@@ -95,7 +95,12 @@ func (engine *Engine) layoutRecursively(model *graph.Model, parent graph.NodeID,
 	childrenInsideSelfLoops := make([]graph.EdgeID, 0)
 	includeChildren := graph.Get(&node.Properties, HierarchyHandling) == "INCLUDE_CHILDREN" &&
 		(algorithm.Features.Has(FeatureCompound) || algorithm.Features.Has(FeatureClusters))
+	topdown := graph.Get(&node.Properties, TopdownLayout)
+	algorithmExecuted := false
 	if includeChildren {
+		if topdown {
+			return nil, fmt.Errorf("Topdown layout cannot be used together with hierarchy handling.")
+		}
 		queue := append([]graph.NodeID(nil), node.Children...)
 		for len(queue) > 0 {
 			childID := queue[0]
@@ -119,6 +124,12 @@ func (engine *Engine) layoutRecursively(model *graph.Model, parent graph.NodeID,
 			}
 		}
 	} else {
+		if topdown {
+			if err := engine.layoutTopdown(model, parent, algorithm, monitor); err != nil {
+				return nil, err
+			}
+			algorithmExecuted = true
+		}
 		children := append([]graph.NodeID(nil), node.Children...)
 		for _, childID := range children {
 			childLoops, err := engine.layoutRecursively(
@@ -133,18 +144,13 @@ func (engine *Engine) layoutRecursively(model *graph.Model, parent graph.NodeID,
 	if monitor.Canceled() {
 		return nil, nil
 	}
-	provider := algorithm.Create()
-	if provider == nil {
-		return nil, fmt.Errorf("layout algorithm %q returned a nil provider", algorithm.ID)
-	}
-	monitor.Begin(algorithm.ID, float64(len(node.Children)))
 	for _, edgeID := range childrenInsideSelfLoops {
 		graph.Set(&model.Edge(edgeID).Properties, NoLayout, true)
 	}
-	err := provider.Layout(model, parent, monitor)
-	monitor.Done()
-	if err != nil {
-		return nil, fmt.Errorf("layout algorithm %s: %w", algorithm.ID, err)
+	if !algorithmExecuted {
+		if err := engine.executeAlgorithm(model, parent, algorithm, monitor); err != nil {
+			return nil, err
+		}
 	}
 	for _, edgeID := range childrenInsideSelfLoops {
 		postProcessInsideSelfLoop(model, edgeID)
@@ -153,6 +159,25 @@ func (engine *Engine) layoutRecursively(model *graph.Model, parent graph.NodeID,
 		return insideSelfLoops, nil
 	}
 	return nil, nil
+}
+
+func (engine *Engine) executeAlgorithm(
+	model *graph.Model,
+	parent graph.NodeID,
+	algorithm *AlgorithmData,
+	monitor ProgressMonitor,
+) error {
+	provider := algorithm.Create()
+	if provider == nil {
+		return fmt.Errorf("layout algorithm %q returned a nil provider", algorithm.ID)
+	}
+	monitor.Begin(algorithm.ID, float64(len(model.Node(parent).Children)))
+	err := provider.Layout(model, parent, monitor)
+	monitor.Done()
+	if err != nil {
+		return fmt.Errorf("layout algorithm %s: %w", algorithm.ID, err)
+	}
+	return nil
 }
 
 func gatherInsideSelfLoops(model *graph.Model, nodeID graph.NodeID) []graph.EdgeID {
@@ -225,37 +250,29 @@ func applyScale(model *graph.Model, nodeID graph.NodeID) {
 		return
 	}
 	node := model.Node(nodeID)
-	for _, childID := range node.Children {
-		child := model.Node(childID)
-		child.Shape.X *= scale
-		child.Shape.Y *= scale
-		child.Shape.Width *= scale
-		child.Shape.Height *= scale
-		for _, portID := range child.Ports {
-			port := model.Port(portID)
-			port.Shape.X *= scale
-			port.Shape.Y *= scale
-			port.Shape.Width *= scale
-			port.Shape.Height *= scale
-		}
-		for _, labelID := range child.Labels {
-			label := model.Label(labelID)
-			label.Shape.X *= scale
-			label.Shape.Y *= scale
-			label.Shape.Width *= scale
-			label.Shape.Height *= scale
+	node.Shape.Width *= scale
+	node.Shape.Height *= scale
+	scaleShape := func(shape *graph.Shape, properties *graph.PropertyMap) {
+		shape.X *= scale
+		shape.Y *= scale
+		shape.Width *= scale
+		shape.Height *= scale
+		if anchor, found := graph.TryGet(properties, PortAnchor); found {
+			anchor.X *= scale
+			anchor.Y *= scale
+			graph.Set(properties, PortAnchor, anchor)
 		}
 	}
-	for _, edgeID := range node.ContainedEdges {
-		for _, sectionID := range model.Edge(edgeID).Sections {
-			section := model.Section(sectionID)
-			section.Start = section.Start.Scale(scale)
-			section.End = section.End.Scale(scale)
-			section.BendPoints.Scale(scale)
-		}
-		if points, found := graph.TryGet(&model.Edge(edgeID).Properties, JunctionPoints); found {
-			points.Scale(scale)
-			graph.Set(&model.Edge(edgeID).Properties, JunctionPoints, points)
+	for _, labelID := range node.Labels {
+		label := model.Label(labelID)
+		scaleShape(&label.Shape, &label.Properties)
+	}
+	for _, portID := range node.Ports {
+		port := model.Port(portID)
+		scaleShape(&port.Shape, &port.Properties)
+		for _, labelID := range port.Labels {
+			label := model.Label(labelID)
+			scaleShape(&label.Shape, &label.Properties)
 		}
 	}
 }

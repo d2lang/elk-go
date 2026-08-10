@@ -14,10 +14,12 @@ import (
 	"math"
 	"sort"
 
+	"github.com/d2lang/elk-go/internal/basicoptions"
 	"github.com/d2lang/elk-go/internal/common/nodespacing"
 	"github.com/d2lang/elk-go/internal/core"
 	"github.com/d2lang/elk-go/internal/geometry"
 	"github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 )
 
 type Provider struct{}
@@ -30,6 +32,7 @@ func Register(registry *core.AlgorithmRegistry) error {
 			Position.ID,
 			SpacingNodeNode.ID,
 			"org.eclipse.elk.nodeSize.constraints",
+			basicoptions.NodeSizeFixedGraphSize.ID,
 			"org.eclipse.elk.nodeSize.minimum",
 			"org.eclipse.elk.nodeSize.options",
 			"org.eclipse.elk.nodeLabels.placement",
@@ -37,11 +40,16 @@ func Register(registry *core.AlgorithmRegistry) error {
 			"org.eclipse.elk.portLabels.placement",
 			CompactionStepSize.ID,
 			Compactor.ID,
+			Rotate.ID,
+			RotationTargetAngle.ID,
+			RotationComputeAdditionalWedgeSpace.ID,
+			RotationOutgoingEdgeAngles.ID,
 			OptimizationCriteria.ID,
 			OrderID.ID,
 			Radius.ID,
 			Sorter.ID,
 			WedgeCriteria.ID,
+			CenterOnRoot.ID,
 		},
 	})
 }
@@ -73,9 +81,15 @@ func (*Provider) Layout(model *graph.Model, parent graph.NodeID, monitor core.Pr
 		wedgeCompact(model, *root, graph.Get(&parentNode.Properties, SpacingNodeNode), graph.Get(&parentNode.Properties, CompactionStepSize), graph.Get(&parentNode.Properties, Sorter))
 	}
 	monitor.Worked(1)
-	calculateGraphSize(model, parent)
+	if graph.Get(&parentNode.Properties, Rotate) {
+		rotateGraph(model, parent, *root)
+	}
+	calculateGraphSize(model, parent, *root)
 	monitor.Worked(1)
 	routeEdges(model, *root)
+	if graph.Get(&parentNode.Properties, RotationOutgoingEdgeAngles) {
+		calculateOutgoingEdgeAngles(model, *root)
+	}
 	monitor.Worked(1)
 	monitor.Done()
 	return nil
@@ -133,7 +147,7 @@ func largestNode(model *graph.Model, parent graph.NodeID) float64 {
 	largest := 0.0
 	for _, child := range model.Node(parent).Children {
 		node := model.Node(child)
-		largest = math.Max(largest, math.Hypot(node.Shape.Width, node.Shape.Height))
+		largest = math.Max(largest, radialLength(node.Shape.Width, node.Shape.Height))
 		largest = math.Max(largest, largestNode(model, child))
 	}
 	return largest
@@ -182,8 +196,8 @@ func positionGraph(model *graph.Model, root graph.NodeID, radius float64, sorter
 
 func positionNodes(model *graph.Model, root, node graph.NodeID, radius float64, sorter, wedge string, currentRadius, minAlpha, maxAlpha, offset float64) {
 	alphaPoint := (minAlpha+maxAlpha)/2 + offset
-	centerX := currentRadius * math.Cos(alphaPoint)
-	centerY := currentRadius * math.Sin(alphaPoint)
+	centerX := currentRadius * javacompat.JSMathCos(alphaPoint)
+	centerY := currentRadius * javacompat.JSMathSin(alphaPoint)
 	shape := &model.Node(node).Shape
 	shape.SetLocation(centerX-shape.Width/2, centerY-shape.Height/2)
 	totalSpace := wedgeSpace(model, node, wedge)
@@ -309,7 +323,7 @@ func evaluateEdgeLengthByPosition(model *graph.Model, root graph.NodeID) float64
 		target := geometry.Point{X: childShape.X + childShape.Width/2, Y: childShape.Y + childShape.Height/2}
 		position := graph.Get(&model.Node(child).Properties, Position)
 		source := geometry.Point{X: rootShape.X + position.X + rootShape.Width/2, Y: rootShape.Y + position.Y + rootShape.Height}
-		result += math.Hypot(target.X-source.X, target.Y-source.Y)
+		result += radialLength(target.X-source.X, target.Y-source.Y)
 	}
 	return result
 }
@@ -370,7 +384,7 @@ func (m radialMover) contractLayer(nodes []graph.NodeID, contracting bool) {
 		node := &m.model.Node(nodeID).Shape
 		center := geometry.Point{X: node.X + node.Width/2, Y: node.Y + node.Height/2}
 		delta := center.Sub(rootCenter)
-		length := math.Hypot(delta.X, delta.Y)
+		length := radialLength(delta.X, delta.Y)
 		delta = delta.Scale(float64(m.step) / length)
 		if contracting {
 			center = center.Sub(delta)
@@ -387,7 +401,7 @@ func (m radialMover) moveNode(nodeID graph.NodeID, distance float64) {
 	rootCenter := geometry.Point{X: root.X + root.Width/2, Y: root.Y + root.Height/2}
 	nodeCenter := geometry.Point{X: node.X + node.Width/2, Y: node.Y + node.Height/2}
 	delta := nodeCenter.Sub(rootCenter)
-	length := math.Hypot(delta.X, delta.Y)
+	length := radialLength(delta.X, delta.Y)
 	node.SetLocation(node.X+delta.X/length*distance, node.Y+delta.Y/length*distance)
 }
 
@@ -395,8 +409,8 @@ func (m radialMover) overlap(firstID, secondID graph.NodeID) bool {
 	first, second := m.model.Node(firstID).Shape, m.model.Node(secondID).Shape
 	x1, x2 := first.X-m.spacing/2, second.X-m.spacing/2
 	y1, y2 := first.Y-m.spacing/2, second.Y-m.spacing/2
-	w1, w2 := first.Width+m.spacing/2, second.Width+m.spacing/2
-	h1, h2 := first.Height+m.spacing/2, second.Height+m.spacing/2
+	w1, w2 := first.Width+m.spacing, second.Width+m.spacing
+	h1, h2 := first.Height+m.spacing, second.Height+m.spacing
 	return x1 < x2+w2 && x2 < x1 && y1 < y2+h2 && y2 < y1 ||
 		x2 < x1+w1 && x1 < x2 && y2 < y1+h1 && y1 < y2 ||
 		x1 < x2+w2 && x2 < x1 && y1 < y2 && y2 < y1+h1 ||
@@ -417,29 +431,30 @@ func (m radialMover) overlapLayer(nodes []graph.NodeID) bool {
 
 func removeOverlaps(model *graph.Model, root graph.NodeID, spacing float64, sorter string) {
 	mover := radialMover{model: model, root: root, spacing: spacing, step: 1}
-	nodes := successors(model, root)
-	if len(nodes) == 0 {
-		return
-	}
-	old := make([]geometry.Point, len(nodes))
-	for index, node := range nodes {
-		old[index] = model.Node(node).Shape.Position()
-	}
-	for mover.overlapLayer(nodes) {
-		mover.contractLayer(nodes, false)
-	}
-	firstPosition := model.Node(nodes[0]).Shape.Position()
-	distance := math.Hypot(firstPosition.X-old[0].X, firstPosition.Y-old[0].Y)
-	next := uniqueNextLevel(model, nodes)
-	for len(next) > 0 {
-		for _, node := range next {
-			mover.moveNode(node, distance)
+	var extend func([]graph.NodeID)
+	extend = func(nodes []graph.NodeID) {
+		if len(nodes) == 0 {
+			return
 		}
-		next = uniqueNextLevel(model, next)
+		old := make([]geometry.Point, len(nodes))
+		for index, node := range nodes {
+			old[index] = model.Node(node).Shape.Position()
+		}
+		for mover.overlapLayer(nodes) {
+			mover.contractLayer(nodes, false)
+		}
+		firstPosition := model.Node(nodes[0]).Shape.Position()
+		distance := radialLength(firstPosition.X-old[0].X, firstPosition.Y-old[0].Y)
+		next := uniqueNextLevel(model, nodes)
+		if len(next) > 0 {
+			for _, node := range next {
+				mover.moveNode(node, distance)
+			}
+		}
+		sortNodes(model, root, next, sorter)
+		extend(next)
 	}
-	// RadiusExtensionOverlapRemoval sorts and recurses only after consuming
-	// the set to empty; preserving that quirk means no deeper overlap pass.
-	_ = sorter
+	extend(successors(model, root))
 }
 
 func uniqueNextLevel(model *graph.Model, nodes []graph.NodeID) []graph.NodeID {
@@ -463,7 +478,7 @@ func radialCompact(model *graph.Model, root graph.NodeID, spacing float64, step 
 	var radius func(graph.NodeID) float64
 	radius = func(node graph.NodeID) float64 {
 		shape, rootShape := model.Node(node).Shape, model.Node(root).Shape
-		return math.Hypot(shape.X-rootShape.X, shape.Y-rootShape.Y)
+		return radialLength(shape.X-rootShape.X, shape.Y-rootShape.Y)
 	}
 	var compact func([]graph.NodeID)
 	compact = func(nodes []graph.NodeID) {
@@ -594,7 +609,59 @@ func containsNode(nodes []graph.NodeID, node graph.NodeID) bool {
 	return false
 }
 
-func calculateGraphSize(model *graph.Model, parent graph.NodeID) {
+func rotateGraph(model *graph.Model, parent, root graph.NodeID) {
+	parentNode := model.Node(parent)
+	targetAngle := graph.Get(&parentNode.Properties, RotationTargetAngle)
+	if graph.Get(&parentNode.Properties, RotationComputeAdditionalWedgeSpace) {
+		outgoing := model.Node(root).OutgoingEdges
+		if len(outgoing) > 0 {
+			firstEdge, lastEdge := model.Edge(outgoing[0]), model.Edge(outgoing[len(outgoing)-1])
+			if len(firstEdge.Targets) > 0 && len(lastEdge.Targets) > 0 {
+				firstNode := model.Node(model.ShapeNode(firstEdge.Targets[0]))
+				lastNode := model.Node(model.ShapeNode(lastEdge.Targets[0]))
+				firstVector := geometry.Point{X: firstNode.Shape.X + firstNode.Shape.Width/2, Y: firstNode.Shape.Y + firstNode.Shape.Height/2}
+				lastVector := geometry.Point{X: lastNode.Shape.X + lastNode.Shape.Width/2, Y: lastNode.Shape.Y + lastNode.Shape.Height/2}
+				alpha := targetAngle
+				if alpha <= 0 {
+					alpha += 2 * math.Pi
+				}
+				wedgeAngle := math.Acos((lastVector.X*firstVector.X + lastVector.Y*firstVector.Y) /
+					(math.Hypot(lastVector.X, lastVector.Y) * math.Hypot(firstVector.X, firstVector.Y)))
+				if wedgeAngle <= 0 {
+					wedgeAngle += 2 * math.Pi
+				}
+				alignmentAngle := math.Atan2(lastVector.Y, lastVector.X)
+				if alignmentAngle <= 0 {
+					alignmentAngle += 2 * math.Pi
+				}
+				targetAngle = math.Pi - (alignmentAngle - alpha + wedgeAngle/2)
+			}
+		}
+	}
+	sine, cosine := javacompat.JSMathSin(targetAngle), javacompat.JSMathCos(targetAngle)
+	for _, child := range parentNode.Children {
+		node := model.Node(child)
+		centerX := node.Shape.X + node.Shape.Width/2
+		centerY := node.Shape.Y + node.Shape.Height/2
+		xCosine := float64(centerX * cosine)
+		ySine := float64(centerY * sine)
+		xSine := float64(centerX * sine)
+		yCosine := float64(centerY * cosine)
+		rotatedX := float64(xCosine - ySine)
+		rotatedY := float64(xSine + yCosine)
+		node.Shape.SetLocation(rotatedX-node.Shape.Width/2, rotatedY-node.Shape.Height/2)
+	}
+}
+
+func radialLength(x, y float64) float64 {
+	// KVector.length() evaluates each square and their sum as separate
+	// JavaScript binary64 operations. Keep Go from fusing either product.
+	xSquared := float64(x * x)
+	ySquared := float64(y * y)
+	return math.Sqrt(float64(xSquared + ySquared))
+}
+
+func calculateGraphSize(model *graph.Model, parent, root graph.NodeID) {
 	minX, minY := math.MaxFloat64, math.MaxFloat64
 	maxX, maxY := math.SmallestNonzeroFloat64, math.SmallestNonzeroFloat64
 	for _, child := range model.Node(parent).Children {
@@ -607,11 +674,52 @@ func calculateGraphSize(model *graph.Model, parent graph.NodeID) {
 	}
 	padding := graph.Get(&model.Node(parent).Properties, Padding)
 	offset := geometry.Point{X: minX - padding.Left, Y: minY - padding.Top}
+	width := maxX - minX + padding.Left + padding.Right
+	height := maxY - minY + padding.Top + padding.Bottom
+	parentNode := model.Node(parent)
+	if graph.Get(&parentNode.Properties, CenterOnRoot) {
+		rootNode := model.Node(root)
+		rootMargins := graph.Get(&rootNode.Properties, nodespacing.Margins)
+		rootX := rootNode.Shape.X + rootNode.Shape.Width/2 + (rootMargins.Left+rootMargins.Right)/2 - offset.X
+		rootY := rootNode.Shape.Y + rootNode.Shape.Height/2 + (rootMargins.Top+rootMargins.Bottom)/2 - offset.Y
+		dx, dy := width-rootX, height-rootY
+		if dx < width/2 {
+			additional := dx - rootX
+			width += additional
+			offset.X -= additional
+		} else {
+			width += rootX - dx
+		}
+		if dy < height/2 {
+			additional := dy - rootY
+			height += additional
+			offset.Y -= additional
+		} else {
+			height += rootY - dy
+		}
+	}
 	for _, child := range model.Node(parent).Children {
 		node := model.Node(child)
 		node.Shape.SetLocation(node.Shape.X-offset.X, node.Shape.Y-offset.Y)
 	}
-	model.Node(parent).Shape.SetDimensions(maxX-minX+padding.Left+padding.Right, maxY-minY+padding.Top+padding.Bottom)
+	if !graph.Get(&parentNode.Properties, basicoptions.NodeSizeFixedGraphSize) {
+		parentNode.Shape.SetDimensions(width, height)
+	}
+	graph.Set(&parentNode.Properties, core.ChildAreaWidth, width-padding.Left-padding.Right)
+	graph.Set(&parentNode.Properties, core.ChildAreaHeight, height-padding.Top-padding.Bottom)
+}
+
+func calculateOutgoingEdgeAngles(model *graph.Model, root graph.NodeID) {
+	for _, edgeID := range model.Node(root).OutgoingEdges {
+		edge := model.Edge(edgeID)
+		if len(edge.Sections) == 0 || len(edge.Targets) == 0 {
+			continue
+		}
+		section := model.Section(edge.Sections[0])
+		angle := math.Atan2(section.End.Y-section.Start.Y, section.End.X-section.Start.X)
+		target := model.ShapeNode(edge.Targets[0])
+		graph.Set(&model.Node(target).Properties, RotationTargetAngle, angle)
+	}
 }
 
 func routeEdges(model *graph.Model, node graph.NodeID) {

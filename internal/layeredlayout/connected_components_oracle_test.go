@@ -15,9 +15,9 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
-// TestConnectedComponentsCompactionOracleParity freezes the supported
-// no-external-port path through ELK 0.8.1's ComponentsCompactor. The fixture
-// deliberately creates irregular component hulls with routed bend points so a
+// TestConnectedComponentsCompactionOracleParity pins official elkjs 0.12.0's
+// no-external-port path through the historically ELK 0.8.1 ComponentsCompactor.
+// The fixture deliberately creates irregular component hulls with routed bend points so a
 // bounding-box-only packer cannot satisfy it.
 func TestConnectedComponentsCompactionOracleParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_LAYERED_STRATEGIES") != "1" {
@@ -41,7 +41,7 @@ func TestConnectedComponentsCompactionOracleParity(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := oracle.Differential(ctx, runner, []byte(fixture.input),
-				elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+				elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, fixture.input)
 			}
 		})

@@ -140,8 +140,13 @@ func (majorization *Majorization) computeStress() float64 {
 	for i, first := range majorization.graph.Nodes {
 		for j := i + 1; j < len(majorization.graph.Nodes); j++ {
 			second := majorization.graph.Nodes[j]
-			displacement := first.Position.Distance(second.Position) - majorization.apsp[first.ID][second.ID]
-			stress += majorization.w[first.ID][second.ID] * displacement * displacement
+			displacement := stressDistance(first.Position, second.Position) - majorization.apsp[first.ID][second.ID]
+			// These same-type conversions intentionally force the intermediate
+			// rounding performed by GWT's generated JavaScript. Without them Go
+			// may fuse the products with the following addition.
+			weightedDisplacement := float64(majorization.w[first.ID][second.ID] * displacement)
+			term := float64(weightedDisplacement * displacement)
+			stress += term
 		}
 	}
 	return stress
@@ -155,14 +160,20 @@ func (majorization *Majorization) computeNewPosition(node *force.FNode) geometry
 		}
 		weight := majorization.w[node.ID][other.ID]
 		weightSum += weight
-		euclideanDistance := node.Position.Distance(other.Position)
+		euclideanDistance := stressDistance(node.Position, other.Position)
 		if euclideanDistance > 0 && majorization.dimension != DimensionY {
-			xDisplacement += weight * (other.Position.X +
-				majorization.apsp[node.ID][other.ID]*(node.Position.X-other.Position.X)/euclideanDistance)
+			xDifference := node.Position.X - other.Position.X
+			xScaledDifference := float64(majorization.apsp[node.ID][other.ID] * xDifference)
+			xTarget := other.Position.X + xScaledDifference/euclideanDistance
+			xContribution := float64(weight * xTarget)
+			xDisplacement += xContribution
 		}
 		if euclideanDistance > 0 && majorization.dimension != DimensionX {
-			yDisplacement += weight * (other.Position.Y +
-				majorization.apsp[node.ID][other.ID]*(node.Position.Y-other.Position.Y)/euclideanDistance)
+			yDifference := node.Position.Y - other.Position.Y
+			yScaledDifference := float64(majorization.apsp[node.ID][other.ID] * yDifference)
+			yTarget := other.Position.Y + yScaledDifference/euclideanDistance
+			yContribution := float64(weight * yTarget)
+			yDisplacement += yContribution
 		}
 	}
 	switch majorization.dimension {
@@ -173,4 +184,14 @@ func (majorization *Majorization) computeNewPosition(node *force.FNode) geometry
 	default:
 		return geometry.Point{X: xDisplacement / weightSum, Y: yDisplacement / weightSum}
 	}
+}
+
+func stressDistance(first, second geometry.Point) float64 {
+	dx := first.X - second.X
+	dy := first.Y - second.Y
+	// Keep the products separately rounded before adding, as KVector.distance
+	// does in the generated ELK.js worker.
+	dxSquared := float64(dx * dx)
+	dySquared := float64(dy * dy)
+	return math.Sqrt(dxSquared + dySquared)
 }

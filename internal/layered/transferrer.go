@@ -230,6 +230,15 @@ func (transferrer *ElkGraphLayoutTransferrer) applyLabel(
 	labelID LLabelID,
 	offset geometry.Point,
 ) {
+	transferrer.applyLabelInCoordinateSystem(arena, labelID, offset, geometry.Point{})
+}
+
+func (transferrer *ElkGraphLayoutTransferrer) applyLabelInCoordinateSystem(
+	arena *LGraphArena,
+	labelID LLabelID,
+	offset geometry.Point,
+	containerOrigin geometry.Point,
+) {
 	origin, found := basegraph.TryGet(&arena.Label(labelID).Properties, OriginalElement)
 	if !found || origin.Kind != OriginLabel {
 		return
@@ -237,7 +246,8 @@ func (transferrer *ElkGraphLayoutTransferrer) applyLabel(
 	label := arena.Label(labelID)
 	original := transferrer.Model.Label(origin.Label)
 	original.Shape.SetDimensions(label.Size.X, label.Size.Y)
-	original.Shape.SetLocation(label.Position.X+offset.X, label.Position.Y+offset.Y)
+	position := label.Position.Add(offset).Sub(containerOrigin)
+	original.Shape.SetLocation(position.X, position.Y)
 }
 
 func (transferrer *ElkGraphLayoutTransferrer) applyEdge(
@@ -255,56 +265,60 @@ func (transferrer *ElkGraphLayoutTransferrer) applyEdge(
 	}
 	sourceNode := arena.EdgeSourceNode(edgeID)
 	targetNode := arena.EdgeTargetNode(edgeID)
-	sourceGraphOrigin := transferrer.graphContentOrigin(arena, arena.NodeGraph(sourceNode))
-	targetGraphOrigin := transferrer.graphContentOrigin(arena, arena.NodeGraph(targetNode))
-	edgeGraphOrigin := sourceGraphOrigin
-	if arena.IsDescendant(targetNode, sourceNode) && arena.Node(sourceNode).NestedGraph != nil {
-		// ELK transfers an edge into its source node's descendants while
-		// applying that source node's nested graph. Its bend points therefore
-		// receive the nested graph's offset and padding, even though the
-		// endpoint remains relative to the source node's border.
-		edgeGraphOrigin = transferrer.graphContentOrigin(arena, *arena.Node(sourceNode).NestedGraph)
+	descendantTarget := arena.IsDescendant(targetNode, sourceNode) &&
+		arena.Node(sourceNode).NestedGraph != nil
+	layoutGraph := arena.NodeGraph(sourceNode)
+	if descendantTarget {
+		layoutGraph = *arena.Node(sourceNode).NestedGraph
 	}
+	baseOffset, edgeOffset := transferrer.edgeLayoutOffsets(arena, edgeID, layoutGraph)
 	sourcePort := arena.Port(*edge.Source)
 	targetPort := arena.Port(*edge.Target)
-	sourcePoint := sourceGraphOrigin.
-		Add(arena.Node(sourceNode).Position).
-		Add(sourcePort.Position).
-		Add(sourcePort.Anchor)
-	targetPoint := targetGraphOrigin.
-		Add(arena.Node(targetNode).Position).
+	// LPort.getAbsoluteAnchor sums node, port, and anchor first. The layout
+	// transferrer adds the graph offset afterwards. That evaluation order is
+	// observable at the final ULP for fractional component and port positions.
+	var sourcePoint geometry.Point
+	if descendantTarget {
+		// Descendant edges are laid out inside their source node. The source
+		// anchor is already relative to that node; Java removes the base graph
+		// offset before applying the complete edge offset below.
+		sourcePoint = sourcePort.Position.Add(sourcePort.Anchor).Sub(baseOffset)
+	} else {
+		sourcePoint = arena.Node(sourceNode).Position.
+			Add(sourcePort.Position).
+			Add(sourcePort.Anchor)
+	}
+	sourcePoint = sourcePoint.Add(edgeOffset)
+	targetPoint := arena.Node(targetNode).Position.
 		Add(targetPort.Position).
 		Add(targetPort.Anchor)
-	// ELK's layered graph reports an endpoint relative to its own graph and
-	// TARGET_OFFSET translates it into the source graph's coordinate system.
-	// graphContentOrigin has already performed that hierarchy translation for
-	// both endpoints, so applying TARGET_OFFSET here would count it twice.
-
-	containerOrigin := geometry.Point{}
-	if original.ContainingNode != nil {
-		containerOrigin = transferrer.absoluteNodePosition(*original.ContainingNode)
+	if targetOffset, found := basegraph.TryGet(&edge.Properties, TargetOffset); found {
+		targetPoint = targetPoint.Add(targetOffset)
 	}
+	targetPoint = targetPoint.Add(edgeOffset)
+	// TARGET_OFFSET moves the target anchor into the edge's reference graph;
+	// edgeOffset then converts that graph into the original edge container's
+	// coordinate system.
 	sectionID := transferrer.Model.FirstSection(originalID, true)
 	section := transferrer.Model.Section(sectionID)
-	section.Start = sourcePoint.Sub(containerOrigin)
-	section.End = targetPoint.Sub(containerOrigin)
+	section.Start = sourcePoint
+	section.End = targetPoint
 	section.StartPresent, section.EndPresent = true, true
 	section.IncomingShape = copyShapeID(&original.Sources[0])
 	section.OutgoingShape = copyShapeID(&original.Targets[0])
 	section.BendPoints = make(geometry.Chain, len(edge.BendPoints))
 	for index, point := range edge.BendPoints {
-		section.BendPoints[index] = edgeGraphOrigin.Add(point).Sub(containerOrigin)
+		section.BendPoints[index] = point.Add(edgeOffset)
 	}
 	section.BendPointsPresent = len(section.BendPoints) > 0
 
-	labelOffset := edgeGraphOrigin.Sub(containerOrigin)
 	for _, labelID := range edge.Labels {
-		transferrer.applyLabel(arena, labelID, labelOffset)
+		transferrer.applyLabel(arena, labelID, edgeOffset)
 	}
 	if junctions, found := basegraph.TryGet(&edge.Properties, JunctionPoints); found && len(junctions) > 0 {
 		translated := make(geometry.Chain, len(junctions))
 		for index, point := range junctions {
-			translated[index] = edgeGraphOrigin.Add(point).Sub(containerOrigin)
+			translated[index] = point.Add(edgeOffset)
 		}
 		basegraph.Set(&original.Properties, core.JunctionPoints, translated)
 	} else {
@@ -312,28 +326,40 @@ func (transferrer *ElkGraphLayoutTransferrer) applyEdge(
 	}
 }
 
-func (transferrer *ElkGraphLayoutTransferrer) graphContentOrigin(
+func (transferrer *ElkGraphLayoutTransferrer) edgeLayoutOffsets(
 	arena *LGraphArena,
-	graphID LGraphID,
-) geometry.Point {
-	graph := arena.Graph(graphID)
-	local := graph.Offset.Add(geometry.Point{X: graph.Padding.Left, Y: graph.Padding.Top})
-	if graph.ParentNode == nil {
-		return local
+	edgeID LEdgeID,
+	layoutGraph LGraphID,
+) (geometry.Point, geometry.Point) {
+	graph := arena.Graph(layoutGraph)
+	baseOffset := graph.Offset.Add(
+		geometry.Point{X: graph.Padding.Left, Y: graph.Padding.Top})
+	hierarchicalOffset := geometry.Point{}
+	targetGraph, found := basegraph.TryGet(
+		&arena.Edge(edgeID).Properties,
+		CoordinateSystemOrigin,
+	)
+	if found {
+		currentGraph := arena.NodeGraph(arena.EdgeSourceNode(edgeID))
+		for currentGraph != targetGraph {
+			current := arena.Graph(currentGraph)
+			if current.ParentNode == nil {
+				break
+			}
+			representingNode := *current.ParentNode
+			hierarchicalOffset = hierarchicalOffset.Add(
+				arena.Node(representingNode).Position)
+			currentGraph = arena.NodeGraph(representingNode)
+			parentGraph := arena.Graph(currentGraph)
+			hierarchicalOffset = hierarchicalOffset.
+				Add(parentGraph.Offset).
+				Add(geometry.Point{
+					X: parentGraph.Padding.Left,
+					Y: parentGraph.Padding.Top,
+				})
+		}
 	}
-	parentNode := *graph.ParentNode
-	outerGraph := arena.NodeGraph(parentNode)
-	return transferrer.graphContentOrigin(arena, outerGraph).
-		Add(arena.Node(parentNode).Position).
-		Add(local)
-}
-
-func (transferrer *ElkGraphLayoutTransferrer) absoluteNodePosition(nodeID basegraph.NodeID) geometry.Point {
-	position := transferrer.Model.Node(nodeID).Shape.Position()
-	for parent := transferrer.Model.Node(nodeID).Parent; parent != nil; parent = transferrer.Model.Node(*parent).Parent {
-		position = position.Add(transferrer.Model.Node(*parent).Shape.Position())
-	}
-	return position
+	return baseOffset, baseOffset.Add(hierarchicalOffset)
 }
 
 func copyShapeID(value *basegraph.ShapeID) *basegraph.ShapeID {

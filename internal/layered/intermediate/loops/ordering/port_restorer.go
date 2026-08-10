@@ -62,6 +62,12 @@ func RestorePorts(arena *layered.LGraphArena, holder *loops.Holder) error {
 
 func (r *restorer) processOneSideLoops(arena *layered.LGraphArena, holder *loops.Holder) error {
 	ordering := basegraph.Get(&arena.Node(holder.LNode).Properties, layered.SelfLoopOrdering)
+	if ordering == layered.SelfLoopOrderingReverseStacked {
+		oneSided := r.loopsByType[loops.OneSide]
+		for left, right := 0, len(oneSided)-1; left < right; left, right = left+1, right-1 {
+			oneSided[left], oneSided[right] = oneSided[right], oneSided[left]
+		}
+	}
 	for _, loop := range r.loopsByType[loops.OneSide] {
 		side := arena.Port(loop.Ports[0].LPort).Side
 		sortedPorts := append([]*loops.Port(nil), loop.Ports...)
@@ -71,7 +77,7 @@ func (r *restorer) processOneSideLoops(arena *layered.LGraphArena, holder *loops
 		switch ordering {
 		case layered.SelfLoopOrderingSequenced:
 			r.addToTargetArea(sortedPorts, side, areaMiddle, appendPorts)
-		case layered.SelfLoopOrderingStacked:
+		case layered.SelfLoopOrderingStacked, layered.SelfLoopOrderingReverseStacked:
 			split := computePortListSplitIndex(sortedPorts)
 			r.addToTargetArea(sortedPorts[:split], side, areaMiddle, prependPorts)
 			r.addToTargetArea(sortedPorts[split:], side, areaMiddle, appendPorts)
@@ -185,6 +191,9 @@ func (r *restorer) addToTargetArea(
 		if port.Hidden {
 			hidden = append(hidden, port)
 		}
+	}
+	for left, right := 0, len(hidden)-1; left < right; left, right = left+1, right-1 {
+		hidden[left], hidden[right] = hidden[right], hidden[left]
 	}
 	if mode == prependPorts {
 		hidden = append(hidden, r.targetAreas[side][area]...)

@@ -117,6 +117,10 @@ const (
 	CycleBreakingInteractive
 	CycleBreakingModelOrder
 	CycleBreakingGreedyModelOrder
+	CycleBreakingSCCConnectivity
+	CycleBreakingSCCNodeType
+	CycleBreakingDFSNodeOrder
+	CycleBreakingBFSNodeOrder
 )
 
 type LayeringStrategy uint8
@@ -124,16 +128,20 @@ type LayeringStrategy uint8
 const (
 	LayeringNetworkSimplex LayeringStrategy = iota
 	LayeringLongestPath
+	LayeringLongestPathSource
 	LayeringCoffmanGraham
 	LayeringInteractive
 	LayeringStretchWidth
 	LayeringMinWidth
+	LayeringBreadthFirstModelOrder
+	LayeringDepthFirstModelOrder
 )
 
 type CrossingMinimizationStrategy uint8
 
 const (
 	CrossingMinimizationLayerSweep CrossingMinimizationStrategy = iota
+	CrossingMinimizationMedianLayerSweep
 	CrossingMinimizationInteractive
 	CrossingMinimizationNone
 )
@@ -197,6 +205,7 @@ type SplineRoutingMode uint8
 const (
 	SplineRoutingSloppy SplineRoutingMode = iota
 	SplineRoutingConservative
+	SplineRoutingConservativeSoft
 )
 
 type GraphCompactionStrategy uint8
@@ -228,6 +237,8 @@ const (
 	NodePromotionDummyNodePercentage
 	NodePromotionNodeCountPercentage
 	NodePromotionNoBoundary
+	NodePromotionModelOrderLeftToRight
+	NodePromotionModelOrderRightToLeft
 )
 
 type PortSortingStrategy uint8
@@ -274,6 +285,39 @@ const (
 	OrderingNone OrderingStrategy = iota
 	OrderingNodesAndEdges
 	OrderingPreferEdges
+	OrderingPreferNodes
+)
+
+type LongEdgeOrderingStrategy uint8
+
+const (
+	LongEdgeDummyNodeOver LongEdgeOrderingStrategy = iota
+	LongEdgeDummyNodeUnder
+	LongEdgeEqual
+)
+
+type ComponentOrderingStrategy uint8
+
+const (
+	ComponentOrderingNone ComponentOrderingStrategy = iota
+	ComponentOrderingInsidePortSideGroups
+	ComponentOrderingGroupModelOrder
+	ComponentOrderingModelOrder
+)
+
+type GroupOrderStrategy uint8
+
+const (
+	GroupOrderOnlyWithinGroup GroupOrderStrategy = iota
+	GroupOrderModelOrder
+	GroupOrderEnforced
+)
+
+type LayerUnzippingStrategy uint8
+
+const (
+	LayerUnzippingNone LayerUnzippingStrategy = iota
+	LayerUnzippingAlternating
 )
 
 type GreedySwitchType uint8
@@ -345,6 +389,7 @@ type SelfLoopOrderingStrategy uint8
 
 const (
 	SelfLoopOrderingStacked SelfLoopOrderingStrategy = iota
+	SelfLoopOrderingReverseStacked
 	SelfLoopOrderingSequenced
 )
 
@@ -438,13 +483,27 @@ var (
 	LinearSegmentsDeflectionDampening    = basegraph.PropertyWithDefault("org.eclipse.elk.layered.nodePlacement.linearSegments.deflectionDampening", func() float64 { return 0.3 })
 	NetworkSimplexNodeFlexibility        = basegraph.NewProperty[NodeFlexibility]("org.eclipse.elk.layered.nodePlacement.networkSimplex.nodeFlexibility")
 	NetworkSimplexNodeFlexibilityDefault = basegraph.PropertyWithDefault("org.eclipse.elk.layered.nodePlacement.networkSimplex.nodeFlexibility.default", func() NodeFlexibility { return NodeFlexibilityNone })
-	LayerChoiceConstraint                = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layering.layerChoiceConstraint", func() int { return -1 })
+	NetworkSimplexRecomputeNodePlacement = basegraph.NewProperty[NodePlacementStrategy]("org.eclipse.elk.layered.nodePlacement.networkSimplex.nodeFlexibility.recomputeNodePlacement")
+	LayerChoiceConstraint                = basegraph.NewProperty[int]("org.eclipse.elk.layered.layering.layerChoiceConstraint")
 	NodePromotionStrategyOption          = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layering.nodePromotion.strategy", func() NodePromotionStrategy { return NodePromotionNone })
 	NodePromotionMaxIterations           = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layering.nodePromotion.maxIterations", func() int { return 0 })
 	Thoroughness                         = basegraph.PropertyWithDefault("org.eclipse.elk.layered.thoroughness", func() int { return 7 })
 	ForceNodeModelOrder                  = basegraph.PropertyWithDefault("org.eclipse.elk.layered.crossingMinimization.forceNodeModelOrder", func() bool { return false })
 	ConsiderModelOrder                   = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.strategy", func() OrderingStrategy { return OrderingNone })
 	NoModelOrder                         = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.noModelOrder", func() bool { return false })
+	PortModelOrder                       = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.portModelOrder", func() bool { return false })
+	ComponentOrdering                    = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.components", func() ComponentOrderingStrategy { return ComponentOrderingNone })
+	LongEdgeOrdering                     = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.longEdgeStrategy", func() LongEdgeOrderingStrategy { return LongEdgeDummyNodeOver })
+	CrossingCounterNodeInfluence         = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.crossingCounterNodeInfluence", func() float64 { return 0 })
+	CrossingCounterPortInfluence         = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.crossingCounterPortInfluence", func() float64 { return 0 })
+	CycleBreakingGroupID                 = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.groupModelOrder.cycleBreakingId", func() int { return 0 })
+	CrossingMinimizationGroupID          = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.groupModelOrder.crossingMinimizationId", func() int { return 0 })
+	ComponentGroupID                     = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.groupModelOrder.componentGroupId", func() int { return 0 })
+	CycleBreakingGroupOrder              = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.groupModelOrder.cbGroupOrderStrategy", func() GroupOrderStrategy { return GroupOrderOnlyWithinGroup })
+	CycleBreakingPreferredSourceID       = basegraph.NewProperty[int]("org.eclipse.elk.layered.considerModelOrder.groupModelOrder.cbPreferredSourceId")
+	CycleBreakingPreferredTargetID       = basegraph.NewProperty[int]("org.eclipse.elk.layered.considerModelOrder.groupModelOrder.cbPreferredTargetId")
+	CrossingMinimizationGroupOrder       = basegraph.PropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.groupModelOrder.cmGroupOrderStrategy", func() GroupOrderStrategy { return GroupOrderOnlyWithinGroup })
+	CrossingMinimizationEnforcedGroups   = basegraph.CloneablePropertyWithDefault("org.eclipse.elk.layered.considerModelOrder.groupModelOrder.cmEnforcedGroupOrders", func() []int { return []int{1, 2, 6, 7, 10, 11} })
 	GreedySwitchActivationThreshold      = basegraph.PropertyWithDefault("org.eclipse.elk.layered.crossingMinimization.greedySwitch.activationThreshold", func() int { return 40 })
 	GreedySwitch                         = basegraph.PropertyWithDefault("org.eclipse.elk.layered.crossingMinimization.greedySwitch.type", func() GreedySwitchType { return GreedySwitchTwoSided })
 	GreedySwitchHierarchical             = basegraph.PropertyWithDefault("org.eclipse.elk.layered.crossingMinimization.greedySwitchHierarchical.type", func() GreedySwitchType { return GreedySwitchOff })
@@ -453,7 +512,9 @@ var (
 	LayerConstraintOption                = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layering.layerConstraint", func() LayerConstraint { return LayerConstraintNone })
 	LayerIDOption                        = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layering.layerId", func() int { return -1 })
 	PositionIDOption                     = basegraph.PropertyWithDefault("org.eclipse.elk.layered.crossingMinimization.positionId", func() int { return -1 })
-	PositionChoiceConstraint             = basegraph.PropertyWithDefault("org.eclipse.elk.layered.crossingMinimization.positionChoiceConstraint", func() int { return -1 })
+	PositionChoiceConstraint             = basegraph.NewProperty[int]("org.eclipse.elk.layered.crossingMinimization.positionChoiceConstraint")
+	InLayerPredecessorOf                 = basegraph.NewProperty[string]("org.eclipse.elk.layered.crossingMinimization.inLayerPredOf")
+	InLayerSuccessorOf                   = basegraph.NewProperty[string]("org.eclipse.elk.layered.crossingMinimization.inLayerSuccOf")
 	GeneratePositionAndLayerIDs          = basegraph.PropertyWithDefault("org.eclipse.elk.layered.generatePositionAndLayerIds", func() bool { return false })
 	FeedbackEdges                        = basegraph.PropertyWithDefault("org.eclipse.elk.layered.feedbackEdges", func() bool { return false })
 	InteractiveReferencePointOption      = basegraph.PropertyWithDefault("org.eclipse.elk.layered.interactiveReferencePoint", func() InteractiveReferencePoint { return InteractiveReferenceCenter })
@@ -482,6 +543,10 @@ var (
 	WrappingMultiEdgeImproveCuts         = basegraph.PropertyWithDefault("org.eclipse.elk.layered.wrapping.multiEdge.improveCuts", func() bool { return true })
 	WrappingMultiEdgeDistancePenalty     = basegraph.PropertyWithDefault("org.eclipse.elk.layered.wrapping.multiEdge.distancePenalty", func() float64 { return 2 })
 	WrappingMultiEdgeImproveWrappedEdges = basegraph.PropertyWithDefault("org.eclipse.elk.layered.wrapping.multiEdge.improveWrappedEdges", func() bool { return true })
+	LayerUnzippingStrategyOption         = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layerUnzipping.strategy", func() LayerUnzippingStrategy { return LayerUnzippingNone })
+	LayerUnzippingMinimizeEdgeLength     = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layerUnzipping.minimizeEdgeLength", func() bool { return false })
+	LayerUnzippingLayerSplit             = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layerUnzipping.layerSplit", func() int { return 2 })
+	LayerUnzippingResetOnLongEdges       = basegraph.PropertyWithDefault("org.eclipse.elk.layered.layerUnzipping.resetOnLongEdges", func() bool { return true })
 	UnnecessaryBendpoints                = basegraph.PropertyWithDefault("org.eclipse.elk.layered.unnecessaryBendpoints", func() bool { return false })
 	CenterEdgeLabelPlacement             = basegraph.PropertyWithDefault("org.eclipse.elk.layered.edgeLabels.centerLabelPlacementStrategy", func() CenterEdgeLabelPlacementStrategy { return CenterLabelMedianLayer })
 	EdgeLabelSideSelectionOption         = basegraph.PropertyWithDefault("org.eclipse.elk.layered.edgeLabels.sideSelection", func() EdgeLabelSideSelection { return EdgeLabelSideSmartDown })
@@ -560,6 +625,14 @@ func ParseCycleBreakingStrategy(value string) (CycleBreakingStrategy, bool) {
 		return CycleBreakingModelOrder, true
 	case "GREEDY_MODEL_ORDER":
 		return CycleBreakingGreedyModelOrder, true
+	case "SCC_CONNECTIVITY":
+		return CycleBreakingSCCConnectivity, true
+	case "SCC_NODE_TYPE":
+		return CycleBreakingSCCNodeType, true
+	case "DFS_NODE_ORDER":
+		return CycleBreakingDFSNodeOrder, true
+	case "BFS_NODE_ORDER":
+		return CycleBreakingBFSNodeOrder, true
 	default:
 		return 0, false
 	}
@@ -571,6 +644,8 @@ func ParseLayeringStrategy(value string) (LayeringStrategy, bool) {
 		return LayeringNetworkSimplex, true
 	case "LONGEST_PATH":
 		return LayeringLongestPath, true
+	case "LONGEST_PATH_SOURCE":
+		return LayeringLongestPathSource, true
 	case "COFFMAN_GRAHAM":
 		return LayeringCoffmanGraham, true
 	case "INTERACTIVE":
@@ -579,6 +654,10 @@ func ParseLayeringStrategy(value string) (LayeringStrategy, bool) {
 		return LayeringStretchWidth, true
 	case "MIN_WIDTH":
 		return LayeringMinWidth, true
+	case "BF_MODEL_ORDER":
+		return LayeringBreadthFirstModelOrder, true
+	case "DF_MODEL_ORDER":
+		return LayeringDepthFirstModelOrder, true
 	default:
 		return 0, false
 	}

@@ -10,47 +10,44 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        go-version: ["1.23.x", "1.25.x"]
+        go-version: ["1.23.x", "1.26.5"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ matrix.go-version }}
       - run: go test ./...
       - run: go test -race ./...
       - run: go vet ./...
 
-  frozen-oracle:
-    runs-on: ubuntu-latest
+  official-oracle:
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.25.x"
-      - uses: actions/setup-node@v4
+          go-version: "1.26.5"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22.x"
-      - name: Download the pinned ELK.js 0.8.2 oracle
+          node-version: "24.19.0"
+      - name: Download the pinned ELK.js 0.12.0 oracle
         run: |
           curl --fail --location --silent --show-error \
-            https://raw.githubusercontent.com/kieler/elkjs/0.8.2/lib/elk.bundled.js \
+            https://raw.githubusercontent.com/kieler/elkjs/ff5771d7165445c42c408bb8a090c8035272218c/lib/elk.bundled.js \
             --output "$RUNNER_TEMP/elk.bundled.js"
-          echo "cd56bf0ddb7ad2587583461d523fdd974dc56b59efd20cdfee954e1112ff1a49  $RUNNER_TEMP/elk.bundled.js" | sha256sum --check
-      - name: Run frozen-oracle differentials
+          echo "1222e44f953ce7746af23801e723708f8e6f436b8b377a6a5fc7552f34a307b3  $RUNNER_TEMP/elk.bundled.js" | sha256sum --check
+      - name: Run D2-scope official-oracle differentials
         env:
           ELKJS_ORACLE_ASSET: ${{ runner.temp }}/elk.bundled.js
           ELK_GO_ORACLE_ALGORITHMS: "1"
           ELK_GO_ORACLE_BASIC: "1"
           ELK_GO_ORACLE_CODEC: "1"
-          ELK_GO_ORACLE_LAYERED_STRATEGIES: "1"
-          ELK_GO_ORACLE_LAYERED_STRATEGY_RANDOM: "5"
           ELK_GO_ORACLE_OPTIONS: "1"
           ELK_GO_ORACLE_PARITY: "1"
           ELK_GO_ORACLE_RANDOM: "100"
-          ELK_GO_ORACLE_RANDOM_GENERIC: "100"
-        run: |
-          go test ./...
-          go test -tags audit ./internal/layeredlayout
+          ELK_GO_ORACLE_SURFACE: "1"
+          ELK_GO_ORACLE_UPGRADE: "1"
+        run: go test ./...

@@ -52,7 +52,7 @@ func compactTree(root *tree, orthogonal bool) {
 							parentRect.X-(childRect.X+childRect.Width),
 							childRect.X-(parentRect.X+parentRect.Width),
 						)
-						vector = vector.ScaleToLength(distance)
+						vector = sporeScaleToLength(vector, distance)
 					}
 				} else {
 					vector.X = 0
@@ -61,14 +61,14 @@ func compactTree(root *tree, orthogonal bool) {
 							parentRect.Y-(childRect.Y+childRect.Height),
 							childRect.Y-(parentRect.Y+parentRect.Height),
 						)
-						vector = vector.ScaleToLength(distance)
+						vector = sporeScaleToLength(vector, distance)
 					}
 				}
 			} else {
-				vector = vector.ScaleToLength(parent.node.underlap(child.node))
+				vector = sporeScaleToLength(vector, parent.node.underlap(child.node))
 			}
-			minimum := getMinUnderlap(root, child, vector.Length(), vector)
-			vector = vector.ScaleToLength(minimum)
+			minimum := getMinUnderlap(root, child, sporeVectorLength(vector), vector)
+			vector = sporeScaleToLength(vector, minimum)
 			translateSubtree(child, vector)
 		}
 	}

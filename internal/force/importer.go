@@ -138,12 +138,18 @@ func (importer *Importer) ApplyLayout(fgraph *FGraph) {
 		maxX = math.Max(maxX, node.Position.X+node.Size.X/2)
 		maxY = math.Max(maxY, node.Position.Y+node.Size.Y/2)
 	}
+	for _, bendpoint := range fgraph.Bendpoints {
+		minX = math.Min(minX, bendpoint.Position.X-bendpoint.Size.X/2)
+		minY = math.Min(minY, bendpoint.Position.Y-bendpoint.Size.Y/2)
+		maxX = math.Max(maxX, bendpoint.Position.X+bendpoint.Size.X/2)
+		maxY = math.Max(maxY, bendpoint.Position.Y+bendpoint.Size.Y/2)
+	}
 	offset := geometry.Point{X: fgraph.Padding.Left - minX, Y: fgraph.Padding.Top - minY}
 
 	for _, fnode := range fgraph.Nodes {
 		node := importer.model.Node(fnode.Origin)
-		fnode.Position = fnode.Position.Add(offset)
-		node.Shape.SetLocation(fnode.Position.X-node.Shape.Width/2, fnode.Position.Y-node.Shape.Height/2)
+		position := fnode.Position.Add(offset)
+		node.Shape.SetLocation(position.X-node.Shape.Width/2, position.Y-node.Shape.Height/2)
 	}
 	for _, fedge := range fgraph.Edges {
 		edge := importer.model.Edge(fedge.Origin)
@@ -154,18 +160,27 @@ func (importer *Importer) ApplyLayout(fgraph *FGraph) {
 			sectionID = edge.Sections[0]
 		}
 		section := importer.model.Section(sectionID)
-		section.Start = fedge.SourcePoint()
-		section.End = fedge.TargetPoint()
+		section.Start = fedge.SourcePoint().Add(offset)
+		section.BendPoints = section.BendPoints[:0]
+		for _, bendpoint := range fedge.Bendpoints {
+			section.BendPoints = append(section.BendPoints, bendpoint.Position.Add(offset))
+		}
+		section.End = fedge.TargetPoint().Add(offset)
 		section.StartPresent, section.EndPresent = true, true
 	}
 	for _, flabel := range fgraph.Labels {
 		label := importer.model.Label(flabel.Origin)
-		flabel.Position = flabel.Position.Add(offset)
-		label.Shape.SetLocation(flabel.Position.X, flabel.Position.Y)
+		position := flabel.Position.Add(offset)
+		label.Shape.SetLocation(position.X, position.Y)
 	}
 
-	resizeNode(importer.model, importer.parent,
-		maxX-minX+fgraph.Padding.Horizontal(), maxY-minY+fgraph.Padding.Vertical())
+	width := maxX - minX + fgraph.Padding.Horizontal()
+	height := maxY - minY + fgraph.Padding.Vertical()
+	if !graph.Get(&importer.model.Node(importer.parent).Properties, NodeSizeFixedGraphSize) {
+		resizeNode(importer.model, importer.parent, width, height)
+	}
+	graph.Set(&importer.model.Node(importer.parent).Properties, core.ChildAreaWidth, width-fgraph.Padding.Horizontal())
+	graph.Set(&importer.model.Node(importer.parent).Properties, core.ChildAreaHeight, height-fgraph.Padding.Vertical())
 }
 
 // resizeNode mirrors ElkUtil.resizeNode(node, width, height, false, true).

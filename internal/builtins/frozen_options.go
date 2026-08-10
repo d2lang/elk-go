@@ -9,6 +9,10 @@
 
 package builtins
 
+// The filename is retained for source-history continuity. The declarations
+// below are not a frozen 0.8 compatibility layer: they complete and normalize
+// the current official elkjs 0.12.0 metadata surface.
+
 import (
 	"fmt"
 	"strings"
@@ -17,11 +21,11 @@ import (
 	"github.com/d2lang/elk-go/internal/geometry"
 )
 
-// registerFrozenCompatibilityOptions completes the metadata surface exposed
-// by ELK.js 0.8.2's knownLayoutOptions(). The algorithms consume these values
+// registerCompatibilityOptions completes the metadata surface exposed
+// by ELK.js 0.12.0's knownLayoutOptions(). The algorithms consume these values
 // by their canonical property IDs, so the declarations live at the registry
 // boundary instead of duplicating properties across implementation packages.
-func registerFrozenCompatibilityOptions(registry *core.OptionRegistry) {
+func registerCompatibilityOptions(registry *core.OptionRegistry) {
 	parents, nodes, edges, ports, labels := core.Parents, core.Nodes, core.Edges, core.Ports, core.Labels
 	options := []core.OptionData{
 		{ID: core.ResolvedAlgorithm.ID, Kind: core.ObjectOption, Targets: parents, MetadataOnly: true},
@@ -47,22 +51,23 @@ func registerFrozenCompatibilityOptions(registry *core.OptionRegistry) {
 			Kind: core.DoubleOption, Targets: parents},
 	}
 	for _, option := range options {
+		if registry.ByID(option.ID) != nil {
+			continue
+		}
 		if err := registry.Register(option); err != nil {
 			panic(err)
 		}
 	}
-	normalizeFrozenOptionMetadata(registry)
+	normalizeCompatibilityOptionMetadata(registry)
 }
 
-// normalizeFrozenOptionMetadata pins descriptive fields that provider-local
+// normalizeCompatibilityOptionMetadata pins descriptive fields that provider-local
 // registries do not consume during layout but elkjs exposes through
 // knownLayoutOptions(). Keeping the corrections centralized makes the public
 // metadata oracle auditable without coupling algorithm packages to the JS API.
-func normalizeFrozenOptionMetadata(registry *core.OptionRegistry) {
+func normalizeCompatibilityOptionMetadata(registry *core.OptionRegistry) {
 	groups := map[string]string{
 		"org.eclipse.elk.box.packingMode":                                               "box",
-		"org.eclipse.elk.disco.componentCompaction.componentLayoutAlgorithm":            "componentCompaction",
-		"org.eclipse.elk.disco.componentCompaction.strategy":                            "componentCompaction",
 		"org.eclipse.elk.edge.thickness":                                                "edge",
 		"org.eclipse.elk.edgeLabels.inline":                                             "edgeLabels",
 		"org.eclipse.elk.edgeLabels.placement":                                          "edgeLabels",
@@ -104,10 +109,6 @@ func normalizeFrozenOptionMetadata(registry *core.OptionRegistry) {
 		"org.eclipse.elk.nodeSize.fixedGraphSize":                                       "nodeSize",
 		"org.eclipse.elk.nodeSize.minimum":                                              "nodeSize",
 		"org.eclipse.elk.nodeSize.options":                                              "nodeSize",
-		"org.eclipse.elk.polyomino.fill":                                                "polyomino",
-		"org.eclipse.elk.polyomino.highLevelSort":                                       "polyomino",
-		"org.eclipse.elk.polyomino.lowLevelSort":                                        "polyomino",
-		"org.eclipse.elk.polyomino.traversalStrategy":                                   "polyomino",
 		"org.eclipse.elk.port.anchor":                                                   "port",
 		"org.eclipse.elk.port.borderOffset":                                             "port",
 		"org.eclipse.elk.port.index":                                                    "port",
@@ -135,25 +136,19 @@ func normalizeFrozenOptionMetadata(registry *core.OptionRegistry) {
 		"org.eclipse.elk.nodeLabels.padding":                              core.Parents,
 		"org.eclipse.elk.padding":                                         core.Parents | core.Nodes,
 		"org.eclipse.elk.portConstraints":                                 core.Nodes,
-		"org.eclipse.elk.rectpacking.expandToAspectRatio":                 core.Nodes,
-		"org.eclipse.elk.rectpacking.lastPlaceShift":                      core.Nodes,
-		"org.eclipse.elk.rectpacking.onlyFirstIteration":                  core.Nodes,
-		"org.eclipse.elk.rectpacking.optimizationGoal":                    core.Nodes,
-		"org.eclipse.elk.rectpacking.rowCompaction":                       core.Nodes,
-		"org.eclipse.elk.rectpacking.targetWidth":                         core.Nodes,
 		"org.eclipse.elk.spacing.portPort":                                core.Parents | core.Nodes,
 	}
 	for id, group := range groups {
 		option := registry.ByID(id)
 		if option == nil {
-			panic(fmt.Sprintf("frozen metadata group references unregistered option %q", id))
+			panic(fmt.Sprintf("compatibility metadata group references unregistered option %q", id))
 		}
 		option.Group = group
 	}
 	for id, target := range targets {
 		option := registry.ByID(id)
 		if option == nil {
-			panic(fmt.Sprintf("frozen metadata targets reference unregistered option %q", id))
+			panic(fmt.Sprintf("compatibility metadata targets reference unregistered option %q", id))
 		}
 		option.Targets = target
 	}

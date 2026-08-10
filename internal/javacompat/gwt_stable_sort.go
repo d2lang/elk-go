@@ -16,14 +16,17 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package intermediate
+package javacompat
 
-// gwtStableSort is a Go adaptation of the legacy merge sort in GWT 2.9.0's
-// emulated java.util.Arrays. Comparator invocation order matters here because
-// ModelOrderNodeComparator records comparisons to make later comparisons
-// transitive. The seven-element insertion-sort cutoff and already-sorted copy
-// fast path therefore intentionally match the frozen JavaScript oracle.
-func gwtStableSort[T any](values []T, compare func(T, T) int) {
+// GWTStableSort reproduces the object-array legacy merge sort in GWT 2.11.0's
+// emulated java.util.Arrays. The relevant implementation is unchanged from
+// GWT 2.9.0. Comparator invocation order is observable when a comparator
+// records comparisons or derives transitive state, as ELK's model-order
+// comparators do.
+func GWTStableSort[T any](values []T, compare func(T, T) int) {
+	if compare == nil {
+		panic("javacompat.GWTStableSort: nil comparator")
+	}
 	auxiliary := append([]T(nil), values...)
 	gwtMergeSort(auxiliary, values, 0, len(values), compare)
 }

@@ -78,6 +78,25 @@ type Edge struct {
 	Target    *Port
 }
 
+// IsInline reports whether this self-loop edge has at least one inline label.
+// ELK 0.11 uses the per-edge flag while routing opposing-side self loops.
+func (edge *Edge) IsInline(arena *layered.LGraphArena) bool {
+	for _, labelID := range arena.Edge(edge.LEdge).Labels {
+		if basegraph.Get(&arena.Label(labelID).Properties, layered.EdgeLabelsInline) {
+			return true
+		}
+	}
+	return false
+}
+
+// LabelSide returns the aggregate side selected for this edge's hyper-loop.
+func (edge *Edge) LabelSide() layered.PortSide {
+	if edge.HyperLoop == nil || edge.HyperLoop.Labels == nil {
+		return layered.UndefinedSide
+	}
+	return edge.HyperLoop.Labels.Side
+}
+
 // LabelAlignment is SelfHyperLoopLabels.Alignment in declaration order.
 type LabelAlignment uint8
 

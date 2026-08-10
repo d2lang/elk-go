@@ -57,6 +57,56 @@ func TestSimpleRowGraphPlacerSortsByAreaAndStartsNewRow(t *testing.T) {
 	}
 }
 
+func TestModelOrderRowGraphPlacerHonorsExternalPortSides(t *testing.T) {
+	arena := layered.NewLGraphArena()
+	targetID := arena.AddGraph()
+	type componentSpec struct {
+		size  geometry.Point
+		sides []layered.PortSide
+	}
+	specs := []componentSpec{
+		{size: geometry.Point{X: 40, Y: 20}, sides: []layered.PortSide{layered.SouthSide}},
+		{size: geometry.Point{X: 70, Y: 30}, sides: []layered.PortSide{layered.NorthSide}},
+		{size: geometry.Point{X: 30, Y: 10}, sides: []layered.PortSide{layered.EastSide}},
+		{size: geometry.Point{X: 20, Y: 15}},
+		{size: geometry.Point{X: 20, Y: 25}, sides: []layered.PortSide{layered.WestSide}},
+	}
+	components := make([]layered.LGraphID, 0, len(specs))
+	nodes := make([]layered.LNodeID, 0, len(specs))
+	for _, spec := range specs {
+		componentID := arena.AddGraph()
+		component := arena.Graph(componentID)
+		component.Size = spec.size
+		var sides uint8
+		for _, side := range spec.sides {
+			sides |= uint8(1) << uint8(side)
+		}
+		basegraph.Set(&component.Properties, layered.ExternalPortConnections, sides)
+		components = append(components, componentID)
+		nodes = append(nodes, addComponentNode(arena, componentID))
+	}
+
+	placeComponentsInModelOrder(
+		arena, components, arena.Graph(targetID), 100, 10,
+	)
+	wantPositions := []geometry.Point{
+		{X: 0, Y: 0},
+		{X: 50, Y: 0},
+		{X: 50, Y: 40},
+		{X: 50, Y: 60},
+		{X: 50, Y: 85},
+	}
+	for index, nodeID := range nodes {
+		if got := arena.Node(nodeID).Position; got != wantPositions[index] {
+			t.Fatalf("component %d position = %v, want %v",
+				index, got, wantPositions[index])
+		}
+	}
+	if got, want := arena.Graph(targetID).Size, (geometry.Point{X: 120, Y: 110}); got != want {
+		t.Fatalf("target size = %v, want %v", got, want)
+	}
+}
+
 func TestAbstractGraphPlacerOffsetsEdgeGeometryOnce(t *testing.T) {
 	arena := layered.NewLGraphArena()
 	targetID, sourceID := arena.AddGraph(), arena.AddGraph()

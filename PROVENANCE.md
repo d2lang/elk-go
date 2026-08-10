@@ -1,10 +1,44 @@
 # Source provenance
 
-This repository is a native Go port whose compatibility oracle is the ELK.js
-version embedded by D2. It does not track the behavior of the newest Eclipse
-Layout Kernel release.
+The source target for this native Go port is the exact official ELK.js 0.12.0
+release. Its behavioral compatibility contract is narrower: D2's eleven
+selectable algorithms at their validated D2-facing entry paths, with complete
+end-to-end parity for D2's Layered profile. Much of the implementation
+originated as a translation of ELK 0.8.1 and has since been updated selectively
+from the ELK 0.12.0 source tag. The historical source map below remains
+applicable to unchanged translation units; source-shaped 0.12 additions are
+identified in their files and tests. Oracle results complement, but do not
+replace, those source mappings and notices.
 
-## Pinned upstream releases
+## Target oracle and source release
+
+- Eclipse Layout Kernel 0.12.0, commit
+  `323312916048544e4e594eab3303cdb0d01e2929`.
+- ELK.js 0.12.0, commit
+  `ff5771d7165445c42c408bb8a090c8035272218c`.
+- GWT 2.11.0, commit
+  `7f76f0f2b5b1b028d2d870782048e44402637fb0`, as pinned by the exact
+  ELK.js 0.12.0 `build.gradle`.
+- Node.js 24.19.0, commit
+  `cdc1b38d40cb567b7ad0b39c86addf830a0af0ae`, bundling V8
+  `13.6.233.17-node.51`. The adapted source file
+  `deps/v8/src/base/ieee754.cc` has SHA-256
+  `1bf999809d4c4c1d31ad5ff3578d32614796f159e08b9e7782560d017721a0c2`.
+- The official ELK.js 0.12.0 `lib/elk.bundled.js` differential oracle has
+  SHA-256
+  `1222e44f953ce7746af23801e723708f8e6f436b8b377a6a5fc7552f34a307b3`.
+
+ELK 0.12.0 Java sources are the target implementation source. The exact
+official ELK.js output is the behavioral oracle where Java-to-JavaScript
+compilation or Java runtime details are observable. It exposes eleven
+providers; DisCo was removed after 0.8.2 and is outside the target surface.
+
+The two observable GWT runtime adaptations described below were compared
+directly between the pinned 2.9.0 and 2.11.0 tags. `PriorityQueue.java` is
+unchanged, and the object-array `Arrays.sort` legacy merge-sort routines are
+unchanged; the 2.11.0 `Arrays.java` changes are outside that object-sort path.
+
+## Existing-port baseline releases
 
 - Eclipse Layout Kernel 0.8.1, commit
   `5dc0f65c78778beb74a36e0f470c6fe6ecdcef67`.
@@ -14,12 +48,13 @@ Layout Kernel release.
   `8188fd9f8e1b70396ba02ce01b1d73a467225a64`.
 - MoonBit Community `moon_elk`, unreleased repository snapshot (no tag),
   commit `3761d04fcc42331a39cd2e879a939697327ed6c3`.
-- The frozen D2 ELK.js bundle used by the differential tests has SHA-256
+- The frozen D2 ELK.js bundle formerly used by the differential tests has
+  SHA-256
   `a297b92da4a257b95c129cc1d8cfb379e2c89bcd4442af90ac06fdd2b1e220b4`.
 
-The ELK 0.8.1 Java sources are the primary implementation source. The frozen
-ELK.js output is the behavioral oracle where Java-to-JavaScript compilation or
-Java runtime details are observable.
+The ELK 0.8.1 Java sources remain the historical implementation provenance for
+unchanged Go files. The frozen 0.8.2 bundle is historical evidence only and is
+no longer accepted by the differential runner.
 
 Two curated input-only fixtures are copied from the pinned `moon_elk` test
 suite. The source repository is
@@ -33,9 +68,10 @@ Eclipse Public License 2.0. The pinned commit has no tag. The exact mapping is:
 
 ## Port map
 
-The following Go packages contain translations and adaptations of the listed
-ELK 0.8.1 source areas. Applicable upstream copyright notices are preserved in
-the translated files.
+The following Go packages originated as translations and adaptations of the
+listed ELK 0.8.1 source areas. Later 0.12 source-shaped changes retain that
+baseline mapping and identify their newer source in file comments or tests.
+Applicable upstream copyright notices are preserved in the translated files.
 
 | Go package | ELK 0.8.1 source area |
 | --- | --- |
@@ -49,8 +85,6 @@ the translated files.
 | `internal/radial` | `org.eclipse.elk.alg.radial` |
 | `internal/spore` | `org.eclipse.elk.alg.spore`, including overlap removal, Delaunay structure extraction, spanning-tree processing, and compaction |
 | `internal/rectpacking` | `org.eclipse.elk.alg.rectpacking`, including both approximation and row/block compaction passes |
-| `internal/disco` | `org.eclipse.elk.alg.disco` graph transformation and connected-component compaction |
-| `internal/disco/polyomino` | `org.eclipse.elk.alg.common.polyomino` grid structures, traversal, sorting, profile fill, and packing used by DisCo |
 | `internal/layered` | `org.eclipse.elk.alg.layered`, including graph transforms, compound layout, and options |
 | `internal/layered/p1cycles` | `org.eclipse.elk.alg.layered.p1cycles` |
 | `internal/layered/p2layers` | `org.eclipse.elk.alg.layered.p2layers` |
@@ -89,7 +123,6 @@ than one distinct upstream notice:
 | `internal/force/graph.go` | the `FGraph.java`, `FNode.java`, `FEdge.java`, `FParticle.java`, `FBendpoint.java`, and `FLabel.java` files below `plugins/org.eclipse.elk.alg.force/src/org/eclipse/elk/alg/force/graph/` |
 | `internal/force/importer.go` | `plugins/org.eclipse.elk.alg.force/src/org/eclipse/elk/alg/force/ElkGraphImporter.java` and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/ElkUtil.java` |
 | `internal/force/provider.go` | `plugins/org.eclipse.elk.alg.force/src/org/eclipse/elk/alg/force/ForceLayoutProvider.java` and `Force.melk` in the same directory |
-| `internal/disco/polyomino/pack.go` | `plugins/org.eclipse.elk.alg.common/src/org/eclipse/elk/alg/common/polyomino/PolyominoCompactor.java`, `ProfileFill.java`, the `Successor*.java` traversal classes, and `structures/Polyominoes.java` |
 | `internal/layered/compound.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/compound/CompoundGraphPreprocessor.java`, `CompoundGraphPostprocessor.java`, `CrossHierarchyEdge.java`, and `CrossHierarchyEdgeComparator.java` |
 | `internal/layered/graph.go` | the `LGraph.java`, `LNode.java`, `LPort.java`, `LEdge.java`, `LLabel.java`, and `Layer.java` files below `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/graph/`, plus `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/options/PortSide.java` |
 | `internal/layered/importer.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/graph/transform/ElkGraphImporter.java` and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/IndividualSpacings.java` |
@@ -117,6 +150,27 @@ than one distinct upstream notice:
 | `internal/rectpacking/provider.go` | `plugins/org.eclipse.elk.alg.rectpacking/src/org/eclipse/elk/alg/rectpacking/RectPacking.melk`, `RectPackingLayoutProvider.java`, `InteractiveRectPackingGraphVisitor.java`; `firstiteration/AreaApproximation.java`, `AreaFilter.java`, `AspectRatioFilter.java`, `BestCandidateFilter.java`, `Calculations.java`, `ScaleMeasureFilter.java`; and `util/DrawingData.java` |
 | `internal/rectpacking/second_iteration.go` | the second-iteration classes below `plugins/org.eclipse.elk.alg.rectpacking/src/org/eclipse/elk/alg/rectpacking/seconditeration/` and `util/Block.java`, `BlockRow.java`, and `BlockStack.java` |
 
+### ELK 0.12 source-shaped additions
+
+The following files implement behavior added or materially changed after the
+historical 0.8.1 baseline. Paths in this table resolve against the exact ELK
+0.12.0 commit pinned above.
+
+| Go file | Exact ELK 0.12.0 source file(s) |
+| --- | --- |
+| `internal/core/codec.go` | `plugins/org.eclipse.elk.graph.json/src/org/eclipse/elk/graph/json/JsonImporter.xtend`, `JsonExporter.xtend`, and `JsonAdapter.xtend`; `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/data/LayoutOptionData.java`; and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/options/ShapeCoords.java` and `EdgeCoords.java` |
+| `internal/core/topdown.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/RecursiveGraphLayoutEngine.java` and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/ElkUtil.java` (`computeChildAreaDimensions`) |
+| `internal/layered/compound.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/compound/CompoundGraphPostprocessor.java` and `graph/LGraphUtil.java` (`changeCoordSystem` identity and coordinate-operation order) |
+| `internal/layered/transferrer.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/graph/transform/ElkGraphLayoutTransferrer.java` (anchor, hierarchy offset, bend-point, and edge-label coordinate grouping) |
+| `internal/layered/intermediate/node_placement_repeater.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/intermediate/NodePlacementRepeater.java`, together with the existing Go translations of `LabelAndNodeSizeProcessor.java` and `NodeMarginCalculator.java` that it invokes |
+| `internal/layered/intermediate/preserveorder/cm_group_model_order.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/intermediate/preserveorder/CMGroupModelOrderCalculator.java` |
+| `internal/layered/intermediate/loops/ordering/port_restorer.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/intermediate/loops/ordering/PortRestorer.java` and `options/SelfLoopOrderingStrategy.java` (SEQUENCED hidden-port orientation and REVERSE_STACKED) |
+| `internal/layered/intermediate/wrapping/breaking_point_inserter.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/intermediate/wrapping/BreakingPointInserter.java`, including the MANUAL-cut and split-edge model-order corrections from ELK commit `c9f0d4c1e3b2c0584ea5603b2627f7a53c9b7eb2` |
+| `internal/layered/intermediate/unzipping/alternating_layer_unzipper.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/intermediate/unzipping/AlternatingLayerUnzipper.java` |
+| `internal/layered/p1cycles/dfs_node_order.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/p1cycles/DFSNodeOrderCycleBreaker.java` |
+| `internal/layered/p1cycles/scc_node_type.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/p1cycles/SCCNodeTypeCycleBreaker.java` |
+| `internal/layered/p5edges/spline_edge_router.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/p5edges/splines/SplineEdgeRouter.java` and `intermediate/FinalSplineBendpointsCalculator.java` (CONSERVATIVE_SOFT routing split) |
+
 The source-shaped Go tests use the same production sources as the file under
 test unless their header comes from an ELK test class. Non-obvious test
 mappings are:
@@ -131,12 +185,18 @@ mappings are:
 | `internal/layered/p4nodes/network_simplex_test.go` | `test/org.eclipse.elk.alg.layered.test/src/org/eclipse/elk/alg/layered/p4nodes/BasicNodePlacementTest.java` |
 
 Two observable JavaScript-runtime routines are separately adapted from GWT
-2.9.0 and retain its Apache License 2.0:
+2.11.0 and retain its Apache License 2.0. Their relevant implementations and
+the checked-in behavior vectors are unchanged from the GWT 2.9.0 baseline:
 
-| Go file | GWT 2.9.0 source |
+| Go file | GWT 2.11.0 source |
 | --- | --- |
 | `internal/javacompat/gwt_priority_queue.go` | `user/super/com/google/gwt/emul/java/util/PriorityQueue.java` |
-| `internal/layered/intermediate/gwt_stable_sort.go` | the legacy merge-sort path in `user/super/com/google/gwt/emul/java/util/Arrays.java` |
+| `internal/javacompat/gwt_stable_sort.go` | the legacy merge-sort path in `user/super/com/google/gwt/emul/java/util/Arrays.java` |
+
+`internal/javacompat/jsmath.go` adapts the sine, cosine, argument-reduction,
+and kernel routines from the exact V8 source pinned above. It retains V8's BSD
+3-Clause license and the embedded fdlibm Sun Microsystems permission notice;
+see `LICENSE.v8-bsd` and the file header.
 
 Additional algorithm packages identify their corresponding ELK source areas
 in their package documentation and file headers.
@@ -148,19 +208,23 @@ command-line tools, differential harness, and Go tests under `graphjson`,
 `internal/graph`, `internal/core`, `internal/oracle`, and `cmd` are elk-go
 adaptations or original work written for this port.
 
-Except for the explicitly attributed GWT priority queue above,
+Except for the explicitly attributed GWT and V8/fdlibm adaptations above,
 `internal/javacompat` is compatibility code implementing observable Java/GWT
 behavior from specifications and independently generated behavior vectors. It
 does not contain OpenJDK code. The project did not copy code from the
-third-party Rust project `elkrs`; ELK 0.8.1 Java, GWT 2.9.0 where identified,
-and the frozen ELK.js artifact remain the implementation and behavioral
-sources.
+third-party Rust project `elkrs`; ELK 0.8.1 and 0.12.0 Java, GWT 2.11.0 where
+identified (with 2.9.0 retained as historical provenance), and the pinned
+ELK.js artifacts remain the implementation and behavioral sources.
 
 ## Licensing
 
-ELK 0.8.1, ELK.js 0.8.2, and the pinned `moon_elk` snapshot are licensed under
-the Eclipse Public License 2.0. Elk-go is distributed under the same license,
-except for the two attributed GWT runtime adaptations distributed under Apache
-License 2.0. See `LICENSE`, `LICENSE.apache-2.0`, `NOTICE.md`, and the
-content-preserving copy of the upstream project notice in
+ELK 0.8.1, ELK 0.12.0, ELK.js 0.8.2, ELK.js 0.12.0, and the pinned `moon_elk`
+snapshot are licensed under the Eclipse Public License 2.0. ELK 0.12.0 and
+ELK.js 0.12.0 additionally state the GPL-3.0-or-later secondary-license option;
+this project continues to distribute the port under EPL-2.0. Elk-go is
+distributed under the same primary license, except for the two attributed GWT
+runtime adaptations distributed under Apache License 2.0 and the attributed
+V8/fdlibm compatibility routines distributed under BSD-3-Clause and SunPro
+terms. See `LICENSE`, `LICENSE.apache-2.0`, `LICENSE.v8-bsd`, `NOTICE.md`, and
+the content-preserving copy of the upstream project notice in
 `NOTICE.eclipse-elk.md`.

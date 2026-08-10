@@ -61,6 +61,25 @@ func TestMinimumSizeAndCenteredLabel(t *testing.T) {
 	}
 }
 
+func TestNodeLabelConstraintSizesAndPlacesInsideLabel(t *testing.T) {
+	model := graph.NewModel()
+	root := model.Root
+	nodeID := model.AddNode(&root)
+	node := model.Node(nodeID)
+	node.Shape.SetDimensions(10, 10)
+	graph.Set(&node.Properties, core.NodeSizeConstraints, []string{"NODE_LABELS"})
+	graph.Set(&node.Properties, NodeLabelsPlacement, []string{"INSIDE", "H_CENTER", "V_CENTER"})
+	labelID := model.AddLabel(graph.NodeElementRef(nodeID), "wide")
+	model.Label(labelID).Shape.SetDimensions(88, 18)
+
+	if got := ProcessNodeSize(model, root, nodeID, true, false); got != (geometry.Point{X: 98, Y: 28}) {
+		t.Fatalf("size = %v", got)
+	}
+	if got := model.Label(labelID).Shape.Position(); got != (geometry.Point{X: 5, Y: 5}) {
+		t.Fatalf("label position = %v", got)
+	}
+}
+
 func TestMarginIncludesOutsideElements(t *testing.T) {
 	model := graph.NewModel()
 	root := model.Root
