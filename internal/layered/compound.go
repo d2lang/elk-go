@@ -15,6 +15,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/d2lang/elk-go/internal/core"
 	"github.com/d2lang/elk-go/internal/geometry"
 	basegraph "github.com/d2lang/elk-go/internal/graph"
 )
@@ -362,7 +363,8 @@ func splitCrossHierarchyEdge(
 		}
 		boundary := boundaryPort(arena, currentGraph, parentGraph, parentNode,
 			PortTypeOutput, original, originalTarget)
-		dummy := externalDummyForBoundary(arena, currentGraph, parentNode, boundary, PortTypeOutput)
+		dummy := externalDummyForBoundary(arena, currentGraph, parentNode, boundary,
+			PortTypeOutput, original)
 		dummyPort := arena.Node(dummy).Ports[0]
 		segment := createHierarchyDummyEdge(arena, original, currentSource, dummyPort)
 		sourceSegments = append(sourceSegments, CrossHierarchyEdge{
@@ -381,7 +383,8 @@ func splitCrossHierarchyEdge(
 		}
 		boundary := boundaryPort(arena, currentGraph, parentGraph, parentNode,
 			PortTypeInput, original, originalSource)
-		dummy := externalDummyForBoundary(arena, currentGraph, parentNode, boundary, PortTypeInput)
+		dummy := externalDummyForBoundary(arena, currentGraph, parentNode, boundary,
+			PortTypeInput, original)
 		dummyPort := arena.Node(dummy).Ports[0]
 		segment := createHierarchyDummyEdge(arena, original, dummyPort, currentTarget)
 		targetSegmentsDeepFirst = append(targetSegmentsDeepFirst, CrossHierarchyEdge{
@@ -490,6 +493,7 @@ func externalDummyForBoundary(
 	parentNode LNodeID,
 	boundary LPortID,
 	portType PortType,
+	original LEdgeID,
 ) LNodeID {
 	port := arena.Port(boundary)
 	// CreateExternalPortDummy adds the dummy's own port. Keep its property
@@ -503,6 +507,21 @@ func externalDummyForBoundary(
 	netFlow := 1
 	if portType == PortTypeInput {
 		netFlow = -1
+	}
+	// A segment that ends directly at the compound parent reuses the original
+	// endpoint port. ELK derives that port's side from all of its connections,
+	// rather than from the hierarchy segment's INPUT/OUTPUT classification.
+	// The distinction matters for an edge from an ancestor to a non-direct
+	// descendant: the segment points into deeper hierarchy, but the ancestor
+	// port's net flow still makes it an output port.
+	edge := arena.Edge(original)
+	outsidePort := edge.Target
+	if portType == PortTypeInput {
+		outsidePort = edge.Source
+	}
+	if outsidePort != nil && arena.Port(*outsidePort).Node != nil &&
+		*arena.Port(*outsidePort).Node == parentNode {
+		netFlow = compoundPortNetFlow(arena, *outsidePort)
 	}
 	position := port.Position
 	nodeSize := arena.Node(parentNode).Size
@@ -531,6 +550,65 @@ func externalDummyForBoundary(
 	basegraph.Set(&arena.Graph(arena.NodeGraph(parentNode)).Properties, GraphProperties,
 		parentProperties|GraphPropertyNonFreePorts)
 	return dummy
+}
+
+// compoundPortNetFlow mirrors CompoundGraphPreprocessor.calculateNetFlow.
+// Positive values make a port an output of its compound parent; negative
+// values make it an input.
+func compoundPortNetFlow(arena *LGraphArena, portID LPortID) int {
+	port := arena.Port(portID)
+	if port.Node == nil {
+		return 0
+	}
+	nodeID := *port.Node
+	insideSelfLoops := basegraph.Get(&arena.Node(nodeID).Properties, core.InsideSelfLoopsActivate)
+	outputVotes, inputVotes := 0, 0
+
+	for _, edgeID := range port.OutgoingEdges {
+		edge := arena.Edge(edgeID)
+		if edge.Source == nil || edge.Target == nil {
+			continue
+		}
+		selfLoop := arena.EdgeIsSelfLoop(edgeID)
+		inside := selfLoop && insideSelfLoops &&
+			basegraph.Get(&edge.Properties, core.InsideSelfLoopsEdge)
+		targetNode := arena.EdgeTargetNode(edgeID)
+		targetGraph := arena.Graph(arena.NodeGraph(targetNode))
+		switch {
+		case selfLoop && inside:
+			inputVotes++
+		case selfLoop:
+			outputVotes++
+		case targetGraph.ParentNode != nil && *targetGraph.ParentNode == nodeID:
+			inputVotes++
+		default:
+			outputVotes++
+		}
+	}
+
+	for _, edgeID := range port.IncomingEdges {
+		edge := arena.Edge(edgeID)
+		if edge.Source == nil || edge.Target == nil {
+			continue
+		}
+		selfLoop := arena.EdgeIsSelfLoop(edgeID)
+		inside := selfLoop && insideSelfLoops &&
+			basegraph.Get(&edge.Properties, core.InsideSelfLoopsEdge)
+		sourceNode := arena.EdgeSourceNode(edgeID)
+		sourceGraph := arena.Graph(arena.NodeGraph(sourceNode))
+		switch {
+		case selfLoop && inside:
+			outputVotes++
+		case selfLoop:
+			inputVotes++
+		case sourceGraph.ParentNode != nil && *sourceGraph.ParentNode == nodeID:
+			outputVotes++
+		default:
+			inputVotes++
+		}
+	}
+
+	return outputVotes - inputVotes
 }
 
 func createHierarchyDummyEdge(
