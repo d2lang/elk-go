@@ -82,7 +82,7 @@ func providerMatrixInput(algorithm string) []byte {
 			"elk.layered.spacing.edgeEdgeBetweenLayers":"50",
 			"elk.edgeLabels.inline":"false",
 			"elk.layered.considerModelOrder.strategy":"NODES_AND_EDGES",
-			"elk.layered.cycleBreaking.strategy":"GREEDY",
+			"elk.layered.cycleBreaking.strategy":"GREEDY_MODEL_ORDER",
 			"elk.nodeSize.constraints":"MINIMUM_SIZE",
 			"elk.contentAlignment":"H_CENTER V_CENTER",
 			"spacing.nodeNodeBetweenLayers":"70",

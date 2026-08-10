@@ -26,7 +26,7 @@ const (
 // source fixtures while ensuring the oracle and candidate receive identical,
 // valid input:
 //
-//   - GREEDY replaces GREEDY_MODEL_ORDER for cycle breaking at every level;
+//   - the root retains GREEDY_MODEL_ORDER, while nested graphs use GREEDY;
 //   - forceNodeModelOrder is removed at every level; and
 //   - nested graphs use the explicit NONE model-order strategy. The root keeps
 //     NODES_AND_EDGES, matching D2's 0.12 adapter.
@@ -58,10 +58,10 @@ func PrepareD2ELK012Input(input []byte) ([]byte, error) {
 func normalizeD2ELK012Node(node map[string]any, depth int) {
 	if options, ok := node["layoutOptions"].(map[string]any); ok {
 		delete(options, forceNodeModelOrderOption)
-		if value, exists := options[cycleBreakingOption]; exists && value == "GREEDY_MODEL_ORDER" {
-			options[cycleBreakingOption] = "GREEDY"
-		}
 		if depth > 0 {
+			if value, exists := options[cycleBreakingOption]; exists && value == "GREEDY_MODEL_ORDER" {
+				options[cycleBreakingOption] = "GREEDY"
+			}
 			if _, exists := options[considerModelOrderOption]; exists {
 				options[considerModelOrderOption] = "NONE"
 			}

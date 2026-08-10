@@ -42,8 +42,8 @@ func TestPrepareD2ELK012Input(t *testing.T) {
 	if got := root[considerModelOrderOption]; got != "NODES_AND_EDGES" {
 		t.Fatalf("root model order = %v, want NODES_AND_EDGES", got)
 	}
-	if got := root[cycleBreakingOption]; got != "GREEDY" {
-		t.Fatalf("root cycle breaking = %v, want GREEDY", got)
+	if got := root[cycleBreakingOption]; got != "GREEDY_MODEL_ORDER" {
+		t.Fatalf("root cycle breaking = %v, want GREEDY_MODEL_ORDER", got)
 	}
 	if _, found := root[forceNodeModelOrderOption]; found {
 		t.Fatal("root forceNodeModelOrder was not removed")
@@ -57,5 +57,34 @@ func TestPrepareD2ELK012Input(t *testing.T) {
 	}
 	if _, found := child[forceNodeModelOrderOption]; found {
 		t.Fatal("nested forceNodeModelOrder was not removed")
+	}
+}
+
+func TestD2GeneratedProfilesUseRootGreedyModelOrder(t *testing.T) {
+	randomInput, err := (RandomCase{Seed: 1, NodeCount: 3, EdgeCount: 4, D2Options: true}).JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	testCases := map[string][]byte{
+		"provider matrix": providerMatrixInput("layered"),
+		"random":          randomInput,
+	}
+	for name, input := range testCases {
+		t.Run(name, func(t *testing.T) {
+			var graph map[string]any
+			if err := json.Unmarshal(input, &graph); err != nil {
+				t.Fatal(err)
+			}
+			root := graph["layoutOptions"].(map[string]any)
+			if got := root[considerModelOrderOption]; got != "NODES_AND_EDGES" {
+				t.Fatalf("root model order = %v, want NODES_AND_EDGES", got)
+			}
+			if got := root[cycleBreakingOption]; got != "GREEDY_MODEL_ORDER" {
+				t.Fatalf("root cycle breaking = %v, want GREEDY_MODEL_ORDER", got)
+			}
+			if _, found := root[forceNodeModelOrderOption]; found {
+				t.Fatal("root forceNodeModelOrder must be absent")
+			}
+		})
 	}
 }

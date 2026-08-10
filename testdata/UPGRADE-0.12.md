@@ -173,6 +173,11 @@ all eleven D2-selectable algorithms once and every curated D2 input once.
 - option metadata and the external complete D2 capture remain separate gates
   so their large mismatch lists do not hide algorithm progress.
 
+The D2 migration profile retains root `GREEDY_MODEL_ORDER` and
+`considerModelOrder=NODES_AND_EDGES`, removes `forceNodeModelOrder` at every
+depth, and rewrites nested model-order processing to `GREEDY` with
+`considerModelOrder=NONE` for ELK 0.12 compound-graph safety.
+
 Provider stages, curated fixtures, D2-profile random cases, and the complete D2
 corpus all use `ExactTolerance`: even a repeatable one-ULP difference is
 recorded. Codec and option-behavior differentials are exact as well.

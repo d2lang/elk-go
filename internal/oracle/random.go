@@ -77,7 +77,7 @@ func (randomCase RandomCase) JSON() ([]byte, error) {
 			"elk.spacing.edgeNode":                        "40",
 			"elk.layered.nodePlacement.bk.fixedAlignment": "BALANCED",
 			"elk.layered.considerModelOrder.strategy":     "NODES_AND_EDGES",
-			"elk.layered.cycleBreaking.strategy":          "GREEDY",
+			"elk.layered.cycleBreaking.strategy":          "GREEDY_MODEL_ORDER",
 			"elk.nodeSize.constraints":                    "MINIMUM_SIZE",
 			"spacing.nodeNodeBetweenLayers":               "70",
 			"spacing.edgeNodeBetweenLayers":               "40",

@@ -28,9 +28,9 @@ accident.
 
 Some checked-in inputs preserve D2's former 0.8.2 model-order options for
 source provenance. Before a 0.12 differential, `PrepareD2ELK012Input` applies
-the explicit migration used by D2: `GREEDY` cycle breaking, no
-`forceNodeModelOrder`, and nested `considerModelOrder=NONE` while retaining
-root `NODES_AND_EDGES`.
+the explicit migration used by D2: root `GREEDY_MODEL_ORDER` with
+`considerModelOrder=NODES_AND_EDGES`, no `forceNodeModelOrder` at any depth,
+and nested `GREEDY` with `considerModelOrder=NONE`.
 
 `upgrade-stages.json` groups every official 0.12 provider and every curated
 fixture into progressively broader gates. See `UPGRADE-0.12.md` for the exact
