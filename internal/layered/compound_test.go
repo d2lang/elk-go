@@ -50,7 +50,13 @@ func TestExternalDummyForBoundarySurvivesPortSliceReallocation(t *testing.T) {
 	copy(ports, arena.Ports)
 	arena.Ports = ports
 
-	dummy := externalDummyForBoundary(arena, childGraph, parent, boundary, PortTypeOutput)
+	edge := arena.AddEdge()
+	otherNode := arena.AddNode(parentGraph)
+	otherPort := arena.AddPort()
+	arena.SetPortNode(otherPort, &otherNode)
+	arena.SetEdgeSource(edge, &boundary)
+	arena.SetEdgeTarget(edge, &otherPort)
+	dummy := externalDummyForBoundary(arena, childGraph, parent, boundary, PortTypeOutput, edge)
 	port := arena.Port(boundary)
 	if got, found := basegraph.TryGet(&port.Properties, PortDummy); !found || got != dummy {
 		t.Fatalf("boundary port dummy = %v, present=%v; want %v", got, found, dummy)
@@ -63,6 +69,54 @@ func TestExternalDummyForBoundarySurvivesPortSliceReallocation(t *testing.T) {
 	}
 	if port.Side != EastSide {
 		t.Fatalf("boundary field side = %v, want EAST", port.Side)
+	}
+}
+
+func TestCompoundParentEndPortUsesConnectionNetFlow(t *testing.T) {
+	arena := NewLGraphArena()
+	top := arena.AddGraph()
+	basegraph.Set(&arena.Graph(top).Properties, DirectionOption, DirectionDown)
+	basegraph.Set(&arena.Graph(top).Properties, Hierarchy, HierarchyIncludeChildren)
+
+	ancestor := arena.AddNode(top)
+	arena.Graph(top).LayerlessNodes = append(arena.Graph(top).LayerlessNodes, ancestor)
+	childGraph := arena.AddGraph()
+	arena.Node(ancestor).NestedGraph = &childGraph
+	arena.Graph(childGraph).ParentNode = &ancestor
+	basegraph.Set(&arena.Graph(childGraph).Properties, DirectionOption, DirectionDown)
+
+	intermediate := arena.AddNode(childGraph)
+	arena.Graph(childGraph).LayerlessNodes = append(arena.Graph(childGraph).LayerlessNodes, intermediate)
+	grandchildGraph := arena.AddGraph()
+	arena.Node(intermediate).NestedGraph = &grandchildGraph
+	arena.Graph(grandchildGraph).ParentNode = &intermediate
+	basegraph.Set(&arena.Graph(grandchildGraph).Properties, DirectionOption, DirectionDown)
+
+	descendant := arena.AddNode(grandchildGraph)
+	arena.Graph(grandchildGraph).LayerlessNodes = append(arena.Graph(grandchildGraph).LayerlessNodes, descendant)
+	sourcePort := arena.AddPort()
+	targetPort := arena.AddPort()
+	arena.SetPortNode(sourcePort, &ancestor)
+	arena.SetPortNode(targetPort, &descendant)
+	original := arena.AddEdge()
+	arena.SetEdgeSource(original, &sourcePort)
+	arena.SetEdgeTarget(original, &targetPort)
+
+	if got := compoundPortNetFlow(arena, sourcePort); got != 1 {
+		t.Fatalf("ancestor source net flow = %d, want 1", got)
+	}
+	if err := (&CompoundGraphPreprocessor{}).Process(arena, top); err != nil {
+		t.Fatal(err)
+	}
+	dummy, found := basegraph.TryGet(&arena.Port(sourcePort).Properties, PortDummy)
+	if !found {
+		t.Fatal("ancestor source port has no hierarchy dummy")
+	}
+	if got := basegraph.Get(&arena.Node(dummy).Properties, ExternalPortSide); got != SouthSide {
+		t.Fatalf("ancestor source dummy side = %v, want SOUTH", got)
+	}
+	if got := arena.Port(sourcePort).Side; got != SouthSide {
+		t.Fatalf("ancestor source side = %v, want SOUTH", got)
 	}
 }
 

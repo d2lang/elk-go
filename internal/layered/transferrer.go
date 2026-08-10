@@ -257,6 +257,14 @@ func (transferrer *ElkGraphLayoutTransferrer) applyEdge(
 	targetNode := arena.EdgeTargetNode(edgeID)
 	sourceGraphOrigin := transferrer.graphContentOrigin(arena, arena.NodeGraph(sourceNode))
 	targetGraphOrigin := transferrer.graphContentOrigin(arena, arena.NodeGraph(targetNode))
+	edgeGraphOrigin := sourceGraphOrigin
+	if arena.IsDescendant(targetNode, sourceNode) && arena.Node(sourceNode).NestedGraph != nil {
+		// ELK transfers an edge into its source node's descendants while
+		// applying that source node's nested graph. Its bend points therefore
+		// receive the nested graph's offset and padding, even though the
+		// endpoint remains relative to the source node's border.
+		edgeGraphOrigin = transferrer.graphContentOrigin(arena, *arena.Node(sourceNode).NestedGraph)
+	}
 	sourcePort := arena.Port(*edge.Source)
 	targetPort := arena.Port(*edge.Target)
 	sourcePoint := sourceGraphOrigin.
@@ -285,18 +293,18 @@ func (transferrer *ElkGraphLayoutTransferrer) applyEdge(
 	section.OutgoingShape = copyShapeID(&original.Targets[0])
 	section.BendPoints = make(geometry.Chain, len(edge.BendPoints))
 	for index, point := range edge.BendPoints {
-		section.BendPoints[index] = sourceGraphOrigin.Add(point).Sub(containerOrigin)
+		section.BendPoints[index] = edgeGraphOrigin.Add(point).Sub(containerOrigin)
 	}
 	section.BendPointsPresent = len(section.BendPoints) > 0
 
-	labelOffset := sourceGraphOrigin.Sub(containerOrigin)
+	labelOffset := edgeGraphOrigin.Sub(containerOrigin)
 	for _, labelID := range edge.Labels {
 		transferrer.applyLabel(arena, labelID, labelOffset)
 	}
 	if junctions, found := basegraph.TryGet(&edge.Properties, JunctionPoints); found && len(junctions) > 0 {
 		translated := make(geometry.Chain, len(junctions))
 		for index, point := range junctions {
-			translated[index] = sourceGraphOrigin.Add(point).Sub(containerOrigin)
+			translated[index] = edgeGraphOrigin.Add(point).Sub(containerOrigin)
 		}
 		basegraph.Set(&original.Properties, core.JunctionPoints, translated)
 	} else {
