@@ -63,7 +63,9 @@ func LayoutJSON(input []byte) ([]byte, error) {
 }
 
 // defaultRegistries is the single integration point for native providers.
-// Algorithm packages register exact ELK 0.8.1 metadata here.
+// Algorithm packages register D2's eleven ELK.js 0.12.0 provider IDs and the
+// official option metadata here. The executable compatibility contract is
+// D2's documented profile, not every expert option combination.
 func defaultRegistries() (*core.OptionRegistry, *core.AlgorithmRegistry) {
 	options := core.NewOptionRegistry()
 	builtins.RegisterOptions(options)

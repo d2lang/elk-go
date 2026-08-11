@@ -1,0 +1,49 @@
+{
+  "oracleVersion": "0.12.0",
+  "oracleCommit": "ff5771d7165445c42c408bb8a090c8035272218c",
+  "oracleAssetSHA256": "1222e44f953ce7746af23801e723708f8e6f436b8b377a6a5fc7552f34a307b3",
+  "stages": [
+    {
+      "id": "10-utility-providers",
+      "description": "Small exact-output smoke cases for the fixed, box, and seeded random providers.",
+      "algorithms": ["fixed", "box", "random"]
+    },
+    {
+      "id": "20-specialized-providers",
+      "description": "Exact-output smoke cases for every non-Layered official 0.12 provider.",
+      "algorithms": ["stress", "mrtree", "radial", "force", "sporeOverlap", "sporeCompaction", "rectpacking"]
+    },
+    {
+      "id": "30-layered-flat",
+      "description": "Flat Layered graphs: directions, branching, labels, cycles, self-loops, ports, and former force-model-order input.",
+      "algorithms": ["layered"],
+      "fixtures": [
+        "curated/01_simple_chain_down.json",
+        "curated/02_branching.json",
+        "curated/03_labels.json",
+        "curated/04_direction_right.json",
+        "curated/05_direction_up.json",
+        "curated/06_direction_left.json",
+        "curated/07_cycle_model_order.json",
+        "curated/08_self_loop.json",
+        "curated/10_ports.json",
+        "curated/12_force_model_order.json"
+      ]
+    },
+    {
+      "id": "31-layered-compound",
+      "description": "Compound, cross-hierarchy, and nested D2-shaped graphs after the explicit 0.12 model-order profile migration.",
+      "fixtures": [
+        "curated/09_compound.json",
+        "curated/11_cross_hierarchy.json",
+        "curated/13_moon_issue8_isomorphic.json",
+        "curated/14_moon_issue9_single_container.json"
+      ]
+    },
+    {
+      "id": "32-layered-strategies",
+      "description": "Layer assignment and strategy-specific regressions.",
+      "fixtures": ["curated/15_coffman_graham.json"]
+    }
+  ]
+}

@@ -100,6 +100,17 @@ func BasePipelineConfiguration(arena *LGraphArena, graphID LGraphID) PipelineCon
 	if basegraph.Get(&graph.Properties, SemiInteractive) {
 		configuration.Intermediates.AddBefore(PhaseNodeOrdering, SemiInteractiveCrossMinProcessor)
 	}
+	if basegraph.Get(&graph.Properties, LayerUnzippingStrategyOption) == LayerUnzippingAlternating {
+		configuration.Intermediates.AddBefore(PhaseNodePlacement, AlternatingLayerUnzipper)
+	}
+	// GraphConfigurator evaluates this while the nodes are still layerless.
+	// NodeFlexibility.NONE is an enum value rather than Java null, so every
+	// node satisfies the source's non-null predicate when the recomputation
+	// option is explicitly present.
+	if len(graph.LayerlessNodes) != 0 &&
+		basegraph.Has(&graph.Properties, NetworkSimplexRecomputeNodePlacement) {
+		configuration.Intermediates.AddAfter(PhaseNodePlacement, NodePlacementRepeater)
+	}
 	if basegraph.Get(&graph.Properties, GraphProperties)&GraphPropertyPartitions != 0 {
 		configuration.Intermediates.
 			AddBefore(PhaseCycleBreaking, PartitionPreprocessor).

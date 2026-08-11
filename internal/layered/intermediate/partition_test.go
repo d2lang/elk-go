@@ -34,6 +34,30 @@ func TestPartitionPreprocessorReversesContradictingEdges(t *testing.T) {
 	}
 }
 
+func TestPartitionPreprocessorReversesEdgeLeadingThroughUnpartitionedNodes(t *testing.T) {
+	arena := layered.NewLGraphArena()
+	graphID := arena.AddGraph()
+	high := arena.AddNode(graphID)
+	bridgeOne := arena.AddNode(graphID)
+	bridgeTwo := arena.AddNode(graphID)
+	low := arena.AddNode(graphID)
+	arena.Graph(graphID).LayerlessNodes = []layered.LNodeID{high, bridgeOne, bridgeTwo, low}
+	basegraph.Set(&arena.Node(high).Properties, core.PartitioningPartition, 2)
+	basegraph.Set(&arena.Node(low).Properties, core.PartitioningPartition, 0)
+
+	first := addPartitionTestEdge(arena, high, bridgeOne)
+	addPartitionTestEdge(arena, bridgeOne, bridgeTwo)
+	addPartitionTestEdge(arena, bridgeTwo, low)
+
+	PreprocessPartitions(arena, graphID)
+	if source, target := arena.EdgeSourceNode(first), arena.EdgeTargetNode(first); source != bridgeOne || target != high {
+		t.Fatalf("first path edge = %d -> %d, want %d -> %d", source, target, bridgeOne, high)
+	}
+	if got := basegraph.Get(&arena.Edge(first).Properties, layered.PriorityDirection); got != partitionConstraintEdgePriority {
+		t.Fatalf("reversed path-edge priority = %d, want %d", got, partitionConstraintEdgePriority)
+	}
+}
+
 func TestPartitionMidprocessorConnectsConsecutivePartitions(t *testing.T) {
 	arena, graphID := partitionTestGraph(0, 0, 4, 4, 9)
 

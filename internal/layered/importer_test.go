@@ -221,6 +221,56 @@ func TestImporterSkipsModelOrderForOptedOutNodes(t *testing.T) {
 	}
 }
 
+func TestImporterAssignsPortModelOrder(t *testing.T) {
+	model := basegraph.NewModel()
+	root := model.Root
+	model.Node(root).Properties.SetRaw(ConsiderModelOrder.ID, "NODES_AND_EDGES")
+	nodeID := model.AddNode(&root)
+	first := model.AddPort(nodeID)
+	skipped := model.AddPort(nodeID)
+	last := model.AddPort(nodeID)
+	basegraph.Set(&model.Port(skipped).Properties, core.NoLayout, true)
+
+	importer := NewElkGraphImporter(model)
+	arena, _, err := importer.ImportGraph(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := basegraph.Get(&arena.Port(importer.Maps.Ports[first]).Properties, ModelOrder); got != 0 {
+		t.Fatalf("first port model order = %d, want 0", got)
+	}
+	if _, found := importer.Maps.Ports[skipped]; found {
+		t.Fatal("no-layout port was imported")
+	}
+	if got := basegraph.Get(&arena.Port(importer.Maps.Ports[last]).Properties, ModelOrder); got != 2 {
+		t.Fatalf("last port model order = %d, want 2 including skipped port", got)
+	}
+}
+
+func TestImporterUsesImmediateParentModelOrderProfile(t *testing.T) {
+	model := basegraph.NewModel()
+	root := model.Root
+	basegraph.Set(&model.Node(root).Properties, core.HierarchyHandling, "INCLUDE_CHILDREN")
+	model.Node(root).Properties.SetRaw(ConsiderModelOrder.ID, "NODES_AND_EDGES")
+	container := model.AddNode(&root)
+	basegraph.Set(&model.Node(container).Properties, core.HierarchyHandling, "INCLUDE_CHILDREN")
+	model.Node(container).Properties.SetRaw(ConsiderModelOrder.ID, "NONE")
+	child := model.AddNode(&container)
+	childPort := model.AddPort(child)
+
+	importer := NewElkGraphImporter(model)
+	arena, _, err := importer.ImportGraph(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := basegraph.TryGet(&arena.Node(importer.Maps.Nodes[child]).Properties, ModelOrder); found {
+		t.Fatal("nested child inherited the root model-order profile")
+	}
+	if _, found := basegraph.TryGet(&arena.Port(importer.Maps.Ports[childPort]).Properties, ModelOrder); found {
+		t.Fatal("nested child port inherited the root model-order profile")
+	}
+}
+
 func TestImporterActivatesPartitionGraphProperty(t *testing.T) {
 	model := basegraph.NewModel()
 	root := model.Root

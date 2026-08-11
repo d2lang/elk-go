@@ -16,12 +16,12 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
-// TestLayeredExternalPortNorthWestComponentFrozen pins the observable result
+// TestLayeredExternalPortNorthWestComponentOfficial0120 pins the observable result
 // of the external-port preprocessing and component-group path. The north/west
-// component deliberately has two implicit ports: ELK 0.8.1's peculiar
-// two-port fixed-side ordering affects both its external-port routing and the
-// final placement of every following component.
-func TestLayeredExternalPortNorthWestComponentFrozen(t *testing.T) {
+// component deliberately has two implicit ports: the peculiar ELK 0.8.1
+// two-port fixed-side ordering retained by official 0.12 affects its routing
+// and the final placement of every following component.
+func TestLayeredExternalPortNorthWestComponentOfficial0120(t *testing.T) {
 	var graph elk.Graph
 	if err := json.Unmarshal([]byte(externalPortNorthWestComponentFixture), &graph); err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestLayeredExternalPortNorthWestComponentFrozen(t *testing.T) {
 
 // TestLayeredExternalPortNorthWestComponentOracleParity checks the complete
 // graph, including all port coordinates and routed sections, against the
-// frozen elkjs 0.8.2 / ELK 0.8.1 artifact.
+// official elkjs 0.12.0 artifact.
 func TestLayeredExternalPortNorthWestComponentOracleParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_LAYERED_STRATEGIES") != "1" {
 		t.Skip("set ELK_GO_ORACLE_LAYERED_STRATEGIES=1 to run Layered strategy differentials")
@@ -84,7 +84,7 @@ func TestLayeredExternalPortNorthWestComponentOracleParity(t *testing.T) {
 	defer cancel()
 	if err := oracle.Differential(ctx, runner,
 		[]byte(externalPortNorthWestComponentFixture), elk.LayoutJSON,
-		oracle.DefaultTolerance); err != nil {
+		oracle.ExactTolerance); err != nil {
 		t.Fatalf("%v\ninput: %s", err, externalPortNorthWestComponentFixture)
 	}
 }

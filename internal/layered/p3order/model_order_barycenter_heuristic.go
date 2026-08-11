@@ -9,10 +9,10 @@
 package p3order
 
 import (
-	"sort"
-
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
+	"github.com/d2lang/elk-go/internal/layered/intermediate/preserveorder"
 )
 
 // ModelOrderBarycenterHeuristic is ELK 0.8.1's partial-order comparator used
@@ -51,7 +51,7 @@ func (modelOrder *ModelOrderBarycenterHeuristic) sort(
 		modelOrder.ClearTransitiveOrdering()
 		return
 	}
-	sort.SliceStable(layer, func(i, j int) bool { return compare(layer[i], layer[j]) < 0 })
+	javacompat.GWTStableSort(layer, compare)
 }
 
 func (modelOrder *ModelOrderBarycenterHeuristic) compare(
@@ -63,16 +63,30 @@ func (modelOrder *ModelOrderBarycenterHeuristic) compare(
 	}
 	firstNode, secondNode := heuristic.Arena.Node(first), heuristic.Arena.Node(second)
 	if basegraph.Has(&firstNode.Properties, layered.ModelOrder) && basegraph.Has(&secondNode.Properties, layered.ModelOrder) {
+		graph := heuristic.Arena.Graph(heuristic.Arena.NodeGraph(first))
+		offset := basegraph.Get(&graph.Properties, layered.MaximumModelOrderNodes)
 		value := compareInt(
-			basegraph.Get(&firstNode.Properties, layered.ModelOrder),
-			basegraph.Get(&secondNode.Properties, layered.ModelOrder),
+			preserveorder.CalculateModelOrderOrGroupModelOrder(
+				graph, &firstNode.Properties, &secondNode.Properties, offset),
+			preserveorder.CalculateModelOrderOrGroupModelOrder(
+				graph, &secondNode.Properties, &firstNode.Properties, offset),
 		)
+		if basegraph.Get(&graph.Properties, layered.CrossingMinimizationGroupOrder) ==
+			layered.GroupOrderOnlyWithinGroup &&
+			basegraph.Get(&firstNode.Properties, layered.CrossingMinimizationGroupID) !=
+				basegraph.Get(&secondNode.Properties, layered.CrossingMinimizationGroupID) {
+			value = 0
+		}
 		if value < 0 {
 			modelOrder.update(first, second)
+			return value
 		} else if value > 0 {
 			modelOrder.update(second, first)
+			return value
 		}
-		return value
+		// Since ELK 0.11, equal model-order values no longer freeze the
+		// relative order. Fall back to the barycenter comparison so the
+		// connected port geometry can break the tie.
 	}
 	value := heuristic.compareBarycenters(first, second)
 	if value < 0 {

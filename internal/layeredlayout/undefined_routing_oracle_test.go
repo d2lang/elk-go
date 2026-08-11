@@ -33,7 +33,7 @@ func TestLayeredUndefinedRoutingOracleParity(t *testing.T) {
 	}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+	if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 		t.Fatalf("%v\ninput: %s", err, input)
 	}
 }

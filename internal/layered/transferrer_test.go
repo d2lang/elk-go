@@ -53,6 +53,41 @@ func TestTransferrerAppliesNodePortAndEdgeLayout(t *testing.T) {
 	}
 }
 
+func TestTransferrerPreservesJavaEndpointEvaluationOrder(t *testing.T) {
+	model := basegraph.NewModel()
+	root := model.Root
+	sourceNode := model.AddNode(&root)
+	targetNode := model.AddNode(&root)
+	model.Node(sourceNode).Shape.SetDimensions(103, 101)
+	model.Node(targetNode).Shape.SetDimensions(101, 101)
+	sourcePort := model.AddPort(sourceNode)
+	targetPort := model.AddPort(targetNode)
+	edgeID := model.AddEdge(&root)
+	model.AddSource(edgeID, basegraph.PortRef(sourcePort))
+	model.AddTarget(edgeID, basegraph.PortRef(targetPort))
+
+	importer := NewElkGraphImporter(model)
+	arena, graphID, err := importer.ImportGraph(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// These are the minimized operands from a D2 compound/component layout.
+	// Summing graph offset + node + port produces the adjacent lower float;
+	// ELK first computes the absolute port anchor, then adds the graph offset.
+	arena.Graph(graphID).Padding = geometry.Spacing{}
+	arena.Graph(graphID).Offset.X = 167.83333333333334
+	arena.Node(importer.Maps.Nodes[sourceNode]).Position.X = 8.1666666666666714
+	arena.Port(importer.Maps.Ports[sourcePort]).Position.X = 68.666666666666657
+
+	if err := NewElkGraphLayoutTransferrer(model, importer.Maps).ApplyLayout(arena, graphID); err != nil {
+		t.Fatal(err)
+	}
+	section := model.Section(model.Edge(edgeID).Sections[0])
+	if got, want := section.Start.X, 244.66666666666669; got != want {
+		t.Fatalf("source endpoint x = %.17g, want Java/GWT evaluation %.17g", got, want)
+	}
+}
+
 func TestTransferrerOnlyAppliesNodeLabelLayoutWhenPlacementIsConfigured(t *testing.T) {
 	model := basegraph.NewModel()
 	root := model.Root
@@ -122,7 +157,10 @@ func TestTransferrerDoesNotDoubleApplyCrossHierarchyTargetOffset(t *testing.T) {
 	arena.Node(importer.Maps.Nodes[sourceNode]).Position = geometry.Point{X: 11, Y: 12}
 	arena.Node(importer.Maps.Nodes[targetNode]).Position = geometry.Point{X: 13, Y: 14}
 	lEdge := importer.Maps.Edges[edge]
-	basegraph.Set(&arena.Edge(lEdge).Properties, TargetOffset, geometry.Point{X: 190, Y: 280})
+	// CompoundGraphPostprocessor computes TARGET_OFFSET by changing from the
+	// target graph's coordinates into the source reference graph.
+	basegraph.Set(&arena.Edge(lEdge).Properties, TargetOffset,
+		graphCoordinateOffset(arena, targetGraph, sourceGraph))
 
 	if err := NewElkGraphLayoutTransferrer(model, importer.Maps).ApplyLayout(arena, graphID); err != nil {
 		t.Fatal(err)

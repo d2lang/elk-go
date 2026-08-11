@@ -47,8 +47,8 @@ func TestSelectLabelSidesUsesInlineAndMovesPorts(t *testing.T) {
 	if got := basegraph.Get(&arena.Node(dummyID).Properties, layered.InternalLabelSide); got != layered.LabelSideInline {
 		t.Fatalf("label side = %v, want INLINE", got)
 	}
-	if got := arena.Node(dummyID).Size.Y; got != 10 {
-		t.Fatalf("inline dummy height = %v, want 10", got)
+	if got := arena.Node(dummyID).Size.Y; got != 9 {
+		t.Fatalf("inline dummy height = %v, want 9", got)
 	}
 	for _, portID := range arena.Node(dummyID).Ports {
 		if got := arena.Port(portID).Position.Y; got != 4.5 {

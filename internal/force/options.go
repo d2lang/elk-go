@@ -6,9 +6,9 @@
 //
 // SPDX-License-Identifier: EPL-2.0
 
-// Package force is a native Go port of ELK 0.8.1's org.eclipse.elk.force
-// provider. The source-shaped names and iteration order in this package are
-// intentional: both are observable in the layouts emitted by elkjs 0.8.2.
+// Package force is a native Go port of org.eclipse.elk.force targeting ELK.js
+// 0.12.0. Its source-shaped names and iteration order retain the historical
+// ELK 0.8.1 translation where that behavior remains observable in 0.12.0.
 package force
 
 import (
@@ -38,12 +38,13 @@ var (
 	Interactive                 = graph.PropertyWithDefault("org.eclipse.elk.interactive", func() bool { return false })
 	OmitNodeMicroLayout         = graph.PropertyWithDefault("org.eclipse.elk.omitNodeMicroLayout", func() bool { return false })
 	EdgeLabelsInline            = graph.PropertyWithDefault("org.eclipse.elk.edgeLabels.inline", func() bool { return false })
+	NodeSizeFixedGraphSize      = graph.PropertyWithDefault("org.eclipse.elk.nodeSize.fixedGraphSize", func() bool { return false })
 	Padding                     = graph.CloneablePropertyWithDefault("org.eclipse.elk.padding", func() geometry.Spacing {
 		return geometry.UniformSpacing(50)
 	})
 )
 
-// RegisterOptions adds the generated ForceOptions metadata from ELK 0.8.1.
+// RegisterOptions adds the ForceOptions metadata supported by ELK 0.12.0.
 // Shared core options may already be present, so registration is idempotent.
 func RegisterOptions(registry *core.OptionRegistry) {
 	options := []core.OptionData{
@@ -60,6 +61,7 @@ func RegisterOptions(registry *core.OptionRegistry) {
 		{ID: SeparateConnectedComponents.ID, Kind: core.BooleanOption, Targets: core.Parents},
 		{ID: Interactive.ID, Kind: core.BooleanOption, Targets: core.Parents},
 		{ID: OmitNodeMicroLayout.ID, Kind: core.BooleanOption, Targets: core.Parents},
+		{ID: NodeSizeFixedGraphSize.ID, Kind: core.BooleanOption, Targets: core.Parents},
 	}
 	for _, option := range options {
 		if registry.ByID(option.ID) == nil {

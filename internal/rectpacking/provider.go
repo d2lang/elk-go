@@ -8,14 +8,18 @@
 //
 // SPDX-License-Identifier: EPL-2.0
 
-// Package rectpacking ports org.eclipse.elk.alg.rectpacking from ELK 0.8.1.
+// Package rectpacking ports org.eclipse.elk.alg.rectpacking from ELK 0.12.0.
 package rectpacking
 
 import (
+	"fmt"
 	"math"
 	"sort"
 
+	"github.com/d2lang/elk-go/internal/basicoptions"
+	"github.com/d2lang/elk-go/internal/box"
 	"github.com/d2lang/elk-go/internal/common/elkutil"
+	"github.com/d2lang/elk-go/internal/common/nodespacing"
 	"github.com/d2lang/elk-go/internal/core"
 	"github.com/d2lang/elk-go/internal/geometry"
 	"github.com/d2lang/elk-go/internal/graph"
@@ -28,35 +32,94 @@ func Register(registry *core.AlgorithmRegistry) error {
 		ID:     "org.eclipse.elk.rectpacking",
 		Create: func() core.LayoutProvider { return &Provider{} },
 		KnownOptions: []string{
-			AspectRatio.ID, ExpandNodes.ID, Padding.ID, SpacingNodeNode.ID,
-			OptimizationGoal.ID, LastPlaceShift.ID, OnlyFirstIteration.ID,
-			RowCompaction.ID, ExpandToAspect.ID, Interactive.ID,
-			DesiredPosition.ID, CurrentPosition.ID, TargetWidth.ID,
+			AspectRatio.ID,
+			basicoptions.NodeSizeFixedGraphSize.ID,
+			Padding.ID,
+			SpacingNodeNode.ID,
+			core.ContentAlignment.ID,
+			core.NodeSizeConstraints.ID,
+			core.NodeSizeMinimum.ID,
+			basicoptions.NodeSizeOptions.ID,
+			"org.eclipse.elk.nodeLabels.placement",
+			OmitNodeMicroLayout.ID,
+			"org.eclipse.elk.portLabels.placement",
+			OptimizationGoal.ID,
+			LastPlaceShift.ID,
+			TargetWidth.ID,
+			WidthApproximationStrategy.ID,
+			PackingStrategy.ID,
+			RowHeightReevaluation.ID,
+			CompactionIterations.ID,
+			WhiteSpaceEliminationStrategy.ID,
+			Interactive.ID,
+			core.InteractiveLayout.ID,
+			DesiredPosition.ID,
+			CurrentPosition.ID,
+			InNewRow.ID,
+			TryBox.ID,
+			OrderBySize.ID,
 		},
 	})
 }
 
-func (*Provider) Layout(model *graph.Model, parent graph.NodeID, _ core.ProgressMonitor) error {
+func (*Provider) Layout(model *graph.Model, parent graph.NodeID, monitor core.ProgressMonitor) error {
 	parentNode := model.Node(parent)
 	rectangles := append([]graph.NodeID(nil), parentNode.Children...)
-	for _, id := range rectangles {
-		model.Node(id).Shape.SetLocation(0, 0)
-	}
-
-	aspectRatio := graph.Get(&parentNode.Properties, AspectRatio)
-	goal := graph.Get(&parentNode.Properties, OptimizationGoal)
-	lastPlaceShift := graph.Get(&parentNode.Properties, LastPlaceShift)
-	onlyFirst := graph.Get(&parentNode.Properties, OnlyFirstIteration)
-	expandNodes := graph.Get(&parentNode.Properties, ExpandNodes)
 	padding := graph.Get(&parentNode.Properties, Padding)
 	spacing := graph.Get(&parentNode.Properties, SpacingNodeNode)
-	compact := graph.Get(&parentNode.Properties, RowCompaction)
-	expandToAspect := graph.Get(&parentNode.Properties, ExpandToAspect)
-	interactive := graph.Get(&parentNode.Properties, Interactive)
-	targetWidth := graph.Get(&parentNode.Properties, TargetWidth)
 
-	if interactive {
-		rectangles = interactiveOrder(model, rectangles)
+	// RectPackingLayoutProvider runs node micro layout both before packing and
+	// after optional whitespace expansion, since expansion can change child
+	// dimensions. The Go node-spacing utility is the matching common phase.
+	if !graph.Get(&parentNode.Properties, OmitNodeMicroLayout) {
+		nodespacing.CalculateLabelAndNodeSizes(model, parent, nil)
+	}
+
+	// ELK 0.12's trybox special case deliberately falls back to Box only when
+	// no consecutive triple is vertically stackable.
+	stackable := false
+	if graph.Get(&parentNode.Properties, TryBox) && len(rectangles) >= 3 {
+		first, second := rectangles[0], rectangles[1]
+		for index := 2; index < len(rectangles); index++ {
+			third := rectangles[index]
+			firstHeight := model.Node(first).Shape.Height
+			secondHeight := model.Node(second).Shape.Height
+			thirdHeight := model.Node(third).Shape.Height
+			if firstHeight >= secondHeight+thirdHeight+spacing ||
+				thirdHeight >= firstHeight+secondHeight+spacing {
+				stackable = true
+				break
+			}
+			first, second = second, third
+		}
+	} else {
+		stackable = true
+	}
+	if !stackable {
+		priority := len(rectangles)
+		for _, id := range rectangles {
+			graph.Set(&model.Node(id).Properties, basicoptions.Priority, priority)
+			priority--
+		}
+		return (&box.Provider{}).Layout(model, parent, monitor)
+	}
+
+	// ELK's phase-independent processors run in this order before width
+	// approximation: minimum-size preprocessing, size ordering, interaction.
+	minimum := elkutil.EffectiveMinSizeConstraintFor(model, parent)
+	if graph.Get(&parentNode.Properties, OrderBySize) {
+		sort.SliceStable(rectangles, func(i, j int) bool {
+			return model.Node(rectangles[i]).Shape.Height > model.Node(rectangles[j]).Shape.Height
+		})
+		parentNode.Children = append(parentNode.Children[:0], rectangles...)
+	}
+
+	if graph.Get(&parentNode.Properties, Interactive) {
+		var err error
+		rectangles, err = interactiveOrder(model, rectangles)
+		if err != nil {
+			return err
+		}
 		// ELK mutates the parent's child EList in interactive mode.
 		parentNode.Children = append(parentNode.Children[:0], rectangles...)
 		for index, id := range rectangles {
@@ -64,33 +127,88 @@ func (*Provider) Layout(model *graph.Model, parent graph.NodeID, _ core.Progress
 		}
 	}
 
-	minimum := elkutil.EffectiveMinSizeConstraintFor(model, parent)
-	minimum.X -= padding.Horizontal()
-	minimum.Y -= padding.Vertical()
-	maxWidth := minimum.X
-	drawing := drawingData{dar: aspectRatio, width: targetWidth, option: wholeDrawing}
-	if targetWidth < 0 || targetWidth < minimum.X {
-		drawing = approximate(model, rectangles, spacing, padding, aspectRatio, goal, lastPlaceShift)
-	}
-	minimum.X += padding.Horizontal()
-	minimum.Y += padding.Vertical()
-	if !onlyFirst {
-		for _, id := range rectangles {
-			model.Node(id).Shape.SetLocation(0, 0)
+	aspectRatio := graph.Get(&parentNode.Properties, AspectRatio)
+	var targetWidth float64
+	switch graph.Get(&parentNode.Properties, WidthApproximationStrategy) {
+	case "TARGET_WIDTH":
+		if !graph.Has(&parentNode.Properties, TargetWidth) {
+			return fmt.Errorf("rectpacking TARGET_WIDTH requires %s", TargetWidth.ID)
 		}
-		maxWidth = math.Max(minimum.X, drawing.width)
-		drawing = placeAndCompact(model, rectangles, maxWidth, minimum, padding, spacing, aspectRatio, expandNodes, expandToAspect, compact)
+		targetWidth = graph.Get(&parentNode.Properties, TargetWidth)
+	case "GREEDY":
+		if len(rectangles) == 0 {
+			targetWidth = 0
+		} else {
+			drawing := approximate(
+				model, rectangles, spacing, padding, aspectRatio,
+				graph.Get(&parentNode.Properties, OptimizationGoal),
+				graph.Get(&parentNode.Properties, LastPlaceShift),
+			)
+			targetWidth = drawing.width
+		}
+	default:
+		return fmt.Errorf("unsupported rectpacking width approximation strategy %q",
+			graph.Get(&parentNode.Properties, WidthApproximationStrategy))
+	}
+	// MinSizePostProcessor clamps the internal target width to the unadjusted
+	// minimum width. Padding is removed later when P2 calculates dimensions.
+	targetWidth = math.Max(targetWidth, minimum.X)
+
+	packingStrategy := graph.Get(&parentNode.Properties, PackingStrategy)
+	var drawing drawingData
+	var rows []*rectRow
+	switch packingStrategy {
+	case "COMPACTION":
+		drawing, rows = compactPlacement(
+			model, rectangles, targetWidth, minimum, padding, spacing, aspectRatio,
+			graph.Get(&parentNode.Properties, RowHeightReevaluation),
+			graph.Get(&parentNode.Properties, CompactionIterations),
+		)
+	case "SIMPLE":
+		drawing, rows = simplePlacement(model, rectangles, targetWidth, minimum, padding, spacing, aspectRatio)
+	case "NONE":
+		drawing = noPlacement(model, rectangles, minimum, padding, aspectRatio)
+	default:
+		return fmt.Errorf("unsupported rectpacking packing strategy %q", packingStrategy)
 	}
 
+	whiteSpaceStrategy := graph.Get(&parentNode.Properties, WhiteSpaceEliminationStrategy)
+	if whiteSpaceStrategy != "NONE" {
+		if rows == nil {
+			return fmt.Errorf("rectpacking whitespace elimination requires a packing strategy that produces rows")
+		}
+		if whiteSpaceStrategy == "TO_ASPECT_RATIO" {
+			if drawing.width/drawing.height < aspectRatio {
+				drawing.width = drawing.height * aspectRatio
+			} else {
+				drawing.additionalHeight += drawing.width/aspectRatio - drawing.height
+				drawing.height += drawing.additionalHeight
+			}
+		} else if whiteSpaceStrategy != "EQUAL_BETWEEN_STRUCTURES" {
+			return fmt.Errorf("unsupported rectpacking whitespace elimination strategy %q", whiteSpaceStrategy)
+		}
+		expandRows(model, rows, drawing.width, drawing.additionalHeight)
+	}
+
+	// Content alignment is applied to the unpadded drawing before every child
+	// is shifted by the requested top/left padding.
+	realSize := rectangleDimensions(model, rectangles)
+	elkutil.TranslateAligned(model, parent,
+		geometry.Point{X: drawing.width, Y: drawing.height}, realSize)
 	for _, id := range rectangles {
 		node := model.Node(id)
 		node.Shape.SetLocation(node.Shape.X+padding.Left, node.Shape.Y+padding.Top)
 	}
-	elkutil.ResizeNode(model, parent, drawing.width+padding.Horizontal(), drawing.height+padding.Vertical(), false, true)
+	if !graph.Get(&parentNode.Properties, basicoptions.NodeSizeFixedGraphSize) {
+		elkutil.ResizeNode(model, parent, drawing.width+padding.Horizontal(), drawing.height+padding.Vertical(), false, true)
+	}
+	if !graph.Get(&parentNode.Properties, OmitNodeMicroLayout) {
+		nodespacing.CalculateLabelAndNodeSizes(model, parent, nil)
+	}
 	return nil
 }
 
-func interactiveOrder(model *graph.Model, rectangles []graph.NodeID) []graph.NodeID {
+func interactiveOrder(model *graph.Model, rectangles []graph.NodeID) ([]graph.NodeID, error) {
 	result := make([]graph.NodeID, 0, len(rectangles))
 	fixed := make([]graph.NodeID, 0)
 	for _, id := range rectangles {
@@ -113,7 +231,7 @@ func interactiveOrder(model *graph.Model, rectangles []graph.NodeID) []graph.Nod
 	for _, id := range fixed {
 		position := graph.Get(&model.Node(id).Properties, DesiredPosition)
 		if position < 0 {
-			position = 0
+			return nil, fmt.Errorf("rectpacking desired position %d is negative", position)
 		}
 		if position > len(result) {
 			position = len(result)
@@ -122,7 +240,7 @@ func interactiveOrder(model *graph.Model, rectangles []graph.NodeID) []graph.Nod
 		copy(result[position+1:], result[position:])
 		result[position] = id
 	}
-	return result
+	return result, nil
 }
 
 type placement uint8
@@ -137,6 +255,7 @@ const (
 
 type drawingData struct {
 	dar, width, height, area, aspect, scale float64
+	additionalHeight                        float64
 	option                                  placement
 	nextX, nextY                            float64
 }

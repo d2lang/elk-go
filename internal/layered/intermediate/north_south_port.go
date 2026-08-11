@@ -10,6 +10,7 @@ package intermediate
 
 import (
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
 )
 
@@ -34,7 +35,8 @@ func PreprocessNorthSouthPorts(arena *layered.LGraphArena, graphID layered.LGrap
 			if node.Type != layered.NormalNode || !constraints.IsSideFixed() {
 				continue
 			}
-			if !constraints.IsOrderFixed() {
+			if !constraints.IsOrderFixed() &&
+				basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) == layered.OrderingNone {
 				sortNorthSouthPortList(arena, nodeID)
 			}
 
@@ -44,6 +46,9 @@ func PreprocessNorthSouthPorts(arena *layered.LGraphArena, graphID layered.LGrap
 			barycenterAssociates := make([]layered.LNodeID, 0)
 
 			northPorts := arena.NodePortsOnSide(nodeID, layered.NorthSide)
+			if basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) != layered.OrderingNone {
+				northPorts = modelOrderNorthSouthInputReversing(arena, northPorts)
+			}
 			createNorthSouthPortDummies(
 				arena, graphID, northPorts, &northDummies, &southDummies, &barycenterAssociates)
 
@@ -63,6 +68,9 @@ func PreprocessNorthSouthPorts(arena *layered.LGraphArena, graphID layered.LGrap
 			for left, right := 0, len(southPorts)-1; left < right; left, right = left+1, right-1 {
 				southPorts[left], southPorts[right] = southPorts[right], southPorts[left]
 			}
+			if basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) != layered.OrderingNone {
+				southPorts = modelOrderNorthSouthInputReversing(arena, southPorts)
+			}
 			createNorthSouthPortDummies(
 				arena, graphID, southPorts, &southDummies, nil, &barycenterAssociates)
 			for _, dummyID := range southDummies {
@@ -81,6 +89,30 @@ func PreprocessNorthSouthPorts(arena *layered.LGraphArena, graphID layered.LGrap
 			}
 		}
 	}
+}
+
+// modelOrderNorthSouthInputReversing ports ELK 0.10's #1067 ordering fix.
+// The Java source calls Lists.reverse(incoming).addAll(outgoing), then returns
+// the underlying incoming list rather than the reverse view. Guava's reverse
+// view inserts each appended value at the front, so the observable result is
+// reversed outgoing ports followed by the original incoming order.
+func modelOrderNorthSouthInputReversing(
+	arena *layered.LGraphArena,
+	ports []layered.LPortID,
+) []layered.LPortID {
+	incoming := make([]layered.LPortID, 0, len(ports))
+	outgoing := make([]layered.LPortID, 0, len(ports))
+	for _, portID := range ports {
+		if len(arena.Port(portID).IncomingEdges) != 0 {
+			incoming = append(incoming, portID)
+		} else {
+			outgoing = append(outgoing, portID)
+		}
+	}
+	for left, right := 0, len(outgoing)-1; left < right; left, right = left+1, right-1 {
+		outgoing[left], outgoing[right] = outgoing[right], outgoing[left]
+	}
+	return append(outgoing, incoming...)
 }
 
 func appendNodeProperty(
@@ -131,7 +163,7 @@ func sortNorthSouthPortList(arena *layered.LGraphArena, nodeID layered.LNodeID) 
 		}
 	}
 
-	gwtStableSort(node.Ports, func(firstID, secondID layered.LPortID) int {
+	javacompat.GWTStableSort(node.Ports, func(firstID, secondID layered.LPortID) int {
 		first, second := arena.Port(firstID), arena.Port(secondID)
 		if first.Side != second.Side {
 			return int(first.Side) - int(second.Side)

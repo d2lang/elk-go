@@ -21,6 +21,7 @@ import (
 	"github.com/d2lang/elk-go/internal/layered"
 	"github.com/d2lang/elk-go/internal/layered/components"
 	"github.com/d2lang/elk-go/internal/layered/intermediate"
+	"github.com/d2lang/elk-go/internal/layered/intermediate/unzipping"
 	"github.com/d2lang/elk-go/internal/layered/intermediate/wrapping"
 	"github.com/d2lang/elk-go/internal/layered/p1cycles"
 	"github.com/d2lang/elk-go/internal/layered/p2layers"
@@ -262,6 +263,10 @@ func selectPhases(
 		cycle = &p1cycles.ModelOrderCycleBreaker{}
 	case layered.CycleBreakingGreedyModelOrder:
 		cycle = p1cycles.NewGreedyModelOrderCycleBreaker()
+	case layered.CycleBreakingDFSNodeOrder:
+		cycle = &p1cycles.DFSNodeOrderCycleBreaker{}
+	case layered.CycleBreakingSCCNodeType:
+		cycle = &p1cycles.SCCNodeTypeCycleBreaker{}
 	default:
 		return nil, fmt.Errorf("layered: cycle-breaking strategy %v is not implemented", strategies.CycleBreaking)
 	}
@@ -293,20 +298,9 @@ func selectPhases(
 	default:
 		return nil, fmt.Errorf("layered: crossing-minimization strategy %v is not implemented", strategies.CrossingMinimization)
 	}
-	var placer layered.LayoutProcessor
-	switch strategies.NodePlacement {
-	case layered.NodePlacementSimple:
-		placer = &p4nodes.SimpleNodePlacer{}
-	case layered.NodePlacementInteractive:
-		placer = &p4nodes.InteractiveNodePlacer{}
-	case layered.NodePlacementLinearSegments:
-		placer = &p4nodes.LinearSegmentsNodePlacer{}
-	case layered.NodePlacementBrandesKoepf:
-		placer = p4nodes.BrandesKoepfPlacer{}
-	case layered.NodePlacementNetworkSimplex:
-		placer = &p4nodes.NetworkSimplexPlacer{}
-	default:
-		return nil, fmt.Errorf("layered: node-placement strategy %v is not implemented", strategies.NodePlacement)
+	placer, err := selectNodePlacer(strategies.NodePlacement)
+	if err != nil {
+		return nil, err
 	}
 	var router layered.LayoutProcessor
 	switch strategies.EdgeRouting {
@@ -329,6 +323,23 @@ func selectPhases(
 		placer,
 		router,
 	}, nil
+}
+
+func selectNodePlacer(strategy layered.NodePlacementStrategy) (layered.LayoutProcessor, error) {
+	switch strategy {
+	case layered.NodePlacementSimple:
+		return &p4nodes.SimpleNodePlacer{}, nil
+	case layered.NodePlacementInteractive:
+		return &p4nodes.InteractiveNodePlacer{}, nil
+	case layered.NodePlacementLinearSegments:
+		return &p4nodes.LinearSegmentsNodePlacer{}, nil
+	case layered.NodePlacementBrandesKoepf:
+		return p4nodes.BrandesKoepfPlacer{}, nil
+	case layered.NodePlacementNetworkSimplex:
+		return &p4nodes.NetworkSimplexPlacer{}, nil
+	default:
+		return nil, fmt.Errorf("layered: node-placement strategy %v is not implemented", strategy)
+	}
 }
 
 func runIntermediate(
@@ -421,6 +432,20 @@ func runIntermediate(
 		return intermediate.RouteHierarchicalPorts(arena, graphID)
 	case layered.HierarchicalNodeResizer:
 		return intermediate.ResizeHierarchicalNode(arena, graphID)
+	case layered.NodePlacementRepeater:
+		strategy, configured := basegraph.TryGet(
+			&arena.Graph(graphID).Properties,
+			layered.NetworkSimplexRecomputeNodePlacement,
+		)
+		if !configured {
+			return fmt.Errorf("layered: node-placement repeater has no recomputation strategy")
+		}
+		placer, err := selectNodePlacer(strategy)
+		if err != nil {
+			return err
+		}
+		intermediate.PrepareNodePlacementRepeat(arena, graphID)
+		return placer.Process(arena, graphID)
 	case layered.LayerSizeAndGraphHeightCalculator:
 		intermediate.CalculateLayerSizesAndGraphHeight(arena, graphID)
 	case layered.ReversedEdgeRestorer:
@@ -429,6 +454,8 @@ func runIntermediate(
 		return intermediate.PreprocessSelfLoops(arena, graphID)
 	case layered.SelfLoopPortRestorer:
 		return intermediate.RestoreSelfLoopPorts(arena, graphID)
+	case layered.AlternatingLayerUnzipper:
+		unzipping.AlternateLayers(arena, graphID)
 	case layered.BreakingPointProcessor:
 		wrapping.ProcessBreakingPoints(arena, graphID)
 	case layered.SingleEdgeGraphWrapper:

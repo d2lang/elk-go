@@ -52,7 +52,7 @@ func TestLayoutRoutesInsideSelfLoopInNodeContents(t *testing.T) {
 		node.Ports[1].X == nil || node.Ports[1].Y == nil ||
 		*node.Ports[0].X != 0 || *node.Ports[0].Y != 20 ||
 		*node.Ports[1].X != 54 || *node.Ports[1].Y != 70 {
-		t.Fatalf("external port positions differ from elkjs 0.8.2: %+v\n%s", node.Ports, output)
+		t.Fatalf("external port positions differ from official elkjs 0.12.0: %+v\n%s", node.Ports, output)
 	}
 	if result.Width == nil || result.Height == nil || *result.Width != 88 || *result.Height != 104 {
 		t.Fatalf("root size = %vx%v, want 88x104: %s", result.Width, result.Height, output)
@@ -67,6 +67,6 @@ func TestLayoutRoutesInsideSelfLoopInNodeContents(t *testing.T) {
 		len(section.BendPoints) != 2 ||
 		section.BendPoints[0].X != 44 || section.BendPoints[0].Y != 37 ||
 		section.BendPoints[1].X != 44 || section.BendPoints[1].Y != 87 {
-		t.Fatalf("inside self-loop routing differs from elkjs 0.8.2: %+v\n%s", section, output)
+		t.Fatalf("inside self-loop routing differs from official elkjs 0.12.0: %+v\n%s", section, output)
 	}
 }

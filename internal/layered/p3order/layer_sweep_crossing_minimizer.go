@@ -15,6 +15,7 @@ import (
 	basegraph "github.com/d2lang/elk-go/internal/graph"
 	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
+	"github.com/d2lang/elk-go/internal/layered/intermediate/preserveorder"
 )
 
 var (
@@ -228,6 +229,14 @@ func (minimizer *LayerSweepCrossingMinimizer) minimizeCrossingsWithCounter(
 	holder := minimizer.graphInfoHolders[graphIndex]
 	graph := arena.Graph(holder.LGraph)
 	forward := minimizer.random.NextBoolean()
+
+	// ELK 0.9 keeps a crossing-free model order completely unchanged. A
+	// regular first sweep may otherwise shuffle unconnected ports even though
+	// the input order is already optimal.
+	if basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
+		minimizer.countCurrentNumberOfCrossings(arena, graphIndex) == 0 {
+		return 0
+	}
 	if (!basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
 		!basegraph.Get(&graph.Properties, layered.SecondTryWithInitialOrder)) ||
 		basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) == layered.OrderingNone {
@@ -271,6 +280,13 @@ func (minimizer *LayerSweepCrossingMinimizer) minimizeCrossingsNodePortOrderWith
 	holder := minimizer.graphInfoHolders[graphIndex]
 	graph := arena.Graph(holder.LGraph)
 	forward := minimizer.random.NextBoolean()
+
+	// See minimizeCrossingsWithCounter. Preserve the initial node and port
+	// order when the weighted counter already reports an optimum.
+	if basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
+		minimizer.countCurrentNumberOfCrossingsNodePortOrder(arena, graphIndex) == 0 {
+		return 0
+	}
 	if (!basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
 		!basegraph.Get(&graph.Properties, layered.SecondTryWithInitialOrder)) ||
 		basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) == layered.OrderingNone {
@@ -403,10 +419,10 @@ func (minimizer *LayerSweepCrossingMinimizer) sortPortsByDummyPositionsInLastLay
 ) {
 	end := sweepEndIndex(onRightMostLayer, len(order))
 	lastLayer := order[end]
-	if arena.Node(lastLayer[0]).Type != layered.ExternalPortNode {
+	j := sweepFirstIndex(onRightMostLayer, len(lastLayer))
+	if arena.Node(lastLayer[j]).Type != layered.ExternalPortNode {
 		return
 	}
-	j := sweepFirstIndex(onRightMostLayer, len(lastLayer))
 	ports := arena.Node(parent).Ports
 	for index, portID := range ports {
 		port := arena.Port(portID)
@@ -477,9 +493,10 @@ func (minimizer *LayerSweepCrossingMinimizer) countCurrentNumberOfCrossingsNodeP
 	strategy := basegraph.Get(&graph.Properties, layered.ConsiderModelOrder)
 	if strategy != layered.OrderingNone {
 		modelOrderInfluence += basegraph.Get(&graph.Properties, modelOrderCrossingCounterNodeInfluence) *
-			float64(countSimpleModelOrderNodeChanges(arena, holder.CurrentNodeOrder))
+			float64(countModelOrderNodeChanges(arena, holder.CurrentNodeOrder, strategy))
 		modelOrderInfluence += basegraph.Get(&graph.Properties, modelOrderCrossingCounterPortInfluence) *
-			float64(countSimpleModelOrderPortChanges(arena, holder.CurrentNodeOrder))
+			float64(countModelOrderPortChanges(arena, holder.CurrentNodeOrder, strategy,
+				basegraph.Get(&graph.Properties, layered.PortModelOrder)))
 	}
 	total := float64(holder.CrossingsCounter.CountAllCrossings(arena, holder.CurrentNodeOrder)) + modelOrderInfluence
 	for _, childGraph := range holder.ChildGraphs {
@@ -529,59 +546,68 @@ func (minimizer *LayerSweepCrossingMinimizer) markGraphChanged(graphIndex int) {
 	minimizer.graphsWhoseNodeOrderChanged = append(minimizer.graphsWhoseNodeOrderChanged, graphIndex)
 }
 
-func countSimpleModelOrderNodeChanges(
+func countModelOrderNodeChanges(
 	arena *layered.LGraphArena,
 	order [][]layered.LNodeID,
+	strategy layered.OrderingStrategy,
 ) int {
 	wrong := 0
+	previousLayer := -1
 	for _, layer := range order {
+		reference := order[0]
+		if previousLayer >= 0 {
+			reference = order[previousLayer]
+		}
+		comparator := preserveorder.NewNodeComparator(
+			arena, reference, strategy, preserveorder.LongEdgeEqual, false)
 		for first := 0; first < len(layer); first++ {
-			firstOrder, firstFound := basegraph.TryGet(&arena.Node(layer[first]).Properties, layered.ModelOrder)
 			for second := first + 1; second < len(layer); second++ {
-				secondOrder, secondFound := basegraph.TryGet(&arena.Node(layer[second]).Properties, layered.ModelOrder)
-				if firstFound && secondFound && firstOrder > secondOrder {
+				if basegraph.Has(&arena.Node(layer[first]).Properties, layered.ModelOrder) &&
+					basegraph.Has(&arena.Node(layer[second]).Properties, layered.ModelOrder) &&
+					comparator.Compare(layer[first], layer[second]) > 0 {
 					wrong++
 				}
 			}
 		}
+		previousLayer++
 	}
 	return wrong
 }
 
-func countSimpleModelOrderPortChanges(
+func countModelOrderPortChanges(
 	arena *layered.LGraphArena,
 	order [][]layered.LNodeID,
+	strategy layered.OrderingStrategy,
+	portModelOrder bool,
 ) int {
 	wrong := 0
+	previousLayer := -1
 	for _, layer := range order {
+		reference := order[0]
+		if previousLayer >= 0 {
+			reference = order[previousLayer]
+		}
 		for _, nodeID := range layer {
+			node := arena.Node(nodeID)
+			comparator := preserveorder.NewPortComparator(
+				arena,
+				reference,
+				strategy,
+				basegraph.Get(&node.Properties, layered.TargetNodeModelOrder),
+				portModelOrder,
+			)
 			ports := arena.Node(nodeID).Ports
 			for first := 0; first < len(ports); first++ {
-				firstOrder, firstFound := firstEdgeModelOrder(arena, ports[first])
 				for second := first + 1; second < len(ports); second++ {
-					secondOrder, secondFound := firstEdgeModelOrder(arena, ports[second])
-					if firstFound && secondFound && firstOrder > secondOrder {
+					if comparator.Compare(ports[first], ports[second]) > 0 {
 						wrong++
 					}
 				}
 			}
 		}
+		previousLayer++
 	}
 	return wrong
-}
-
-func firstEdgeModelOrder(
-	arena *layered.LGraphArena,
-	portID layered.LPortID,
-) (int, bool) {
-	edges := arena.Port(portID).OutgoingEdges
-	if len(edges) == 0 {
-		edges = arena.Port(portID).IncomingEdges
-	}
-	if len(edges) == 0 {
-		return 0, false
-	}
-	return basegraph.TryGet(&arena.Edge(edges[0]).Properties, layered.ModelOrder)
 }
 
 func sweepFirstIndex(forward bool, length int) int {

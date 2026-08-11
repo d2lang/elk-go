@@ -29,6 +29,7 @@ type Codec struct {
 	nodeJSON    []*graphjson.Node
 	portJSON    []*graphjson.Port
 	edgeJSON    []*graphjson.Edge
+	edgeParents []graph.NodeID
 	labelJSON   []*graphjson.Label
 	sectionJSON []*graphjson.EdgeSection
 }
@@ -46,6 +47,7 @@ func (codec *Codec) reset() {
 	codec.nodeJSON = nil
 	codec.portJSON = nil
 	codec.edgeJSON = nil
+	codec.edgeParents = nil
 	codec.labelJSON = nil
 	codec.sectionJSON = nil
 }
@@ -54,6 +56,9 @@ func (codec *Codec) reset() {
 func (codec *Codec) Import(input *graphjson.Graph) (*graph.Model, error) {
 	if input == nil {
 		return nil, fmt.Errorf("ELK graph must not be nil")
+	}
+	if err := codec.rejectUnconstructableJSONProperties(input); err != nil {
+		return nil, err
 	}
 	codec.reset()
 	model := graph.NewModel()
@@ -64,6 +69,31 @@ func (codec *Codec) Import(input *graphjson.Graph) (*graph.Model, error) {
 		return nil, err
 	}
 	return model, nil
+}
+
+func (codec *Codec) rejectUnconstructableJSONProperties(node *graphjson.Node) error {
+	if node == nil {
+		return nil
+	}
+	for _, key := range codec.layoutOptionKeys(node.LayoutOptions, node.LayoutOptionKeys()) {
+		option := codec.Options.BySuffix(key)
+		if option == nil || node.LayoutOptions[key] == nil {
+			continue
+		}
+		switch option.ID {
+		case TopdownSizeApproximator.ID:
+			return fmt.Errorf("Couldn't create new instance of property '%s'. Make sure its type is registered with the ElkReflect utility class.",
+				TopdownSizeApproximator.ID)
+		case "org.eclipse.elk.layered.considerModelOrder.groupModelOrder.cmEnforcedGroupOrders":
+			return fmt.Errorf("Severe implementation error in the Json to ElkGraph importer.")
+		}
+	}
+	for _, child := range node.Children {
+		if err := codec.rejectUnconstructableJSONProperties(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (codec *Codec) importNode(model *graph.Model, id graph.NodeID, input *graphjson.Node) error {
@@ -191,8 +221,10 @@ func (codec *Codec) importEdge(model *graph.Model, parent graph.NodeID, input *g
 	id := model.AddEdge(&parent)
 	for len(codec.edgeJSON) <= int(id) {
 		codec.edgeJSON = append(codec.edgeJSON, nil)
+		codec.edgeParents = append(codec.edgeParents, 0)
 	}
 	codec.edgeJSON[int(id)] = input
+	codec.edgeParents[int(id)] = parent
 	edge := model.Edge(id)
 	edge.Identifier, edge.IdentifierPresent = input.ID.String(), true
 	codec.importProperties(&edge.Properties, input.LayoutOptions, input.LayoutOptionKeys())
@@ -531,36 +563,213 @@ func toJSONPoint(point geometry.Point) graphjson.Point {
 	return graphjson.Point{X: point.X, Y: point.Y}
 }
 
+type coordinateContext struct {
+	nodeGlobal     []geometry.Point
+	portGlobal     []geometry.Point
+	labelGlobal    []geometry.Point
+	nodeShapeMode  []string
+	portShapeMode  []string
+	edgeShapeMode  []string
+	labelShapeMode []string
+	nodeEdgeMode   []string
+	portEdgeMode   []string
+	edgeEdgeMode   []string
+	labelEdgeMode  []string
+}
+
+func resolveCoordinateMode(value, inherited, fallback string) string {
+	if value == "" || value == "INHERIT" {
+		if inherited != "" {
+			return inherited
+		}
+		return fallback
+	}
+	return value
+}
+
+func (codec *Codec) coordinates(model *graph.Model) (*coordinateContext, error) {
+	if len(codec.edgeParents) != len(model.Edges) {
+		return nil, fmt.Errorf("edge parent bindings do not match imported model")
+	}
+	context := &coordinateContext{
+		nodeGlobal:     make([]geometry.Point, len(model.Nodes)),
+		portGlobal:     make([]geometry.Point, len(model.Ports)),
+		labelGlobal:    make([]geometry.Point, len(model.Labels)),
+		nodeShapeMode:  make([]string, len(model.Nodes)),
+		portShapeMode:  make([]string, len(model.Ports)),
+		edgeShapeMode:  make([]string, len(model.Edges)),
+		labelShapeMode: make([]string, len(model.Labels)),
+		nodeEdgeMode:   make([]string, len(model.Nodes)),
+		portEdgeMode:   make([]string, len(model.Ports)),
+		edgeEdgeMode:   make([]string, len(model.Edges)),
+		labelEdgeMode:  make([]string, len(model.Labels)),
+	}
+
+	// Arena creation order is parent-before-child. Record absolute coordinates
+	// independently of the requested JSON output modes, matching JsonImporter.
+	for index := range model.Nodes {
+		node := model.Node(graph.NodeID(index))
+		var parentGlobal geometry.Point
+		parentShapeMode, parentEdgeMode := "", ""
+		if node.Parent != nil {
+			parent := int(*node.Parent)
+			parentGlobal = context.nodeGlobal[parent]
+			parentShapeMode = context.nodeShapeMode[parent]
+			parentEdgeMode = context.nodeEdgeMode[parent]
+		}
+		context.nodeGlobal[index] = node.Shape.Position().Add(parentGlobal)
+		context.nodeShapeMode[index] = resolveCoordinateMode(
+			graph.Get(&node.Properties, JSONShapeCoords), parentShapeMode, "PARENT")
+		context.nodeEdgeMode[index] = resolveCoordinateMode(
+			graph.Get(&node.Properties, JSONEdgeCoords), parentEdgeMode, "CONTAINER")
+	}
+
+	for index := range model.Ports {
+		port := model.Port(graph.PortID(index))
+		parent := int(port.Parent)
+		context.portGlobal[index] = port.Shape.Position().Add(context.nodeGlobal[parent])
+		context.portShapeMode[index] = resolveCoordinateMode(
+			graph.Get(&port.Properties, JSONShapeCoords), context.nodeShapeMode[parent], "PARENT")
+		context.portEdgeMode[index] = resolveCoordinateMode(
+			graph.Get(&port.Properties, JSONEdgeCoords), context.nodeEdgeMode[parent], "CONTAINER")
+	}
+
+	for index := range model.Edges {
+		edge := model.Edge(graph.EdgeID(index))
+		parent := int(codec.edgeParents[index])
+		context.edgeShapeMode[index] = resolveCoordinateMode(
+			graph.Get(&edge.Properties, JSONShapeCoords), context.nodeShapeMode[parent], "PARENT")
+		context.edgeEdgeMode[index] = resolveCoordinateMode(
+			graph.Get(&edge.Properties, JSONEdgeCoords), context.nodeEdgeMode[parent], "CONTAINER")
+	}
+
+	for index := range model.Labels {
+		label := model.Label(graph.LabelID(index))
+		parentGlobal, parentShapeMode, parentEdgeMode, err := codec.labelParentCoordinates(context, label.Parent)
+		if err != nil {
+			return nil, err
+		}
+		context.labelGlobal[index] = label.Shape.Position().Add(parentGlobal)
+		context.labelShapeMode[index] = resolveCoordinateMode(
+			graph.Get(&label.Properties, JSONShapeCoords), parentShapeMode, "PARENT")
+		context.labelEdgeMode[index] = resolveCoordinateMode(
+			graph.Get(&label.Properties, JSONEdgeCoords), parentEdgeMode, "CONTAINER")
+	}
+	return context, nil
+}
+
+func (codec *Codec) labelParentCoordinates(
+	context *coordinateContext,
+	parent graph.ElementID,
+) (geometry.Point, string, string, error) {
+	switch parent.Kind {
+	case graph.NodeElement:
+		index := int(parent.Node)
+		return context.nodeGlobal[index], context.nodeShapeMode[index], context.nodeEdgeMode[index], nil
+	case graph.PortElement:
+		index := int(parent.Port)
+		return context.portGlobal[index], context.portShapeMode[index], context.portEdgeMode[index], nil
+	case graph.EdgeElement:
+		index := int(parent.Edge)
+		if index >= len(codec.edgeParents) {
+			return geometry.Point{}, "", "", fmt.Errorf("edge parent binding %d is missing", index)
+		}
+		originalParent := int(codec.edgeParents[index])
+		return context.nodeGlobal[originalParent], context.edgeShapeMode[index], context.edgeEdgeMode[index], nil
+	case graph.LabelElement:
+		index := int(parent.Label)
+		return context.labelGlobal[index], context.labelShapeMode[index], context.labelEdgeMode[index], nil
+	default:
+		return geometry.Point{}, "", "", fmt.Errorf("unknown label parent kind: %d", parent.Kind)
+	}
+}
+
+func (codec *Codec) edgeOutputOffset(model *graph.Model, context *coordinateContext, edgeID graph.EdgeID) geometry.Point {
+	index := int(edgeID)
+	originalParent := int(codec.edgeParents[index])
+	containingNode := model.Edge(edgeID).ContainingNode
+	if containingNode == nil {
+		return geometry.Point{}
+	}
+	containingGlobal := context.nodeGlobal[int(*containingNode)]
+	switch context.nodeEdgeMode[originalParent] {
+	case "ROOT":
+		return containingGlobal
+	case "PARENT":
+		return containingGlobal.Sub(context.nodeGlobal[originalParent])
+	default:
+		return geometry.Point{}
+	}
+}
+
+func (codec *Codec) labelOutputOffset(model *graph.Model, context *coordinateContext, label *graph.Label) geometry.Point {
+	switch label.Parent.Kind {
+	case graph.NodeElement:
+		index := int(label.Parent.Node)
+		if context.nodeShapeMode[index] == "ROOT" {
+			return context.nodeGlobal[index]
+		}
+	case graph.PortElement:
+		index := int(label.Parent.Port)
+		if context.portShapeMode[index] == "ROOT" {
+			return context.portGlobal[index]
+		}
+	case graph.EdgeElement:
+		return codec.edgeOutputOffset(model, context, label.Parent.Edge)
+	case graph.LabelElement:
+		index := int(label.Parent.Label)
+		if context.labelShapeMode[index] == "ROOT" {
+			return context.labelGlobal[index]
+		}
+	}
+	return geometry.Point{}
+}
+
 // TransferLayout copies all layout output into the public objects imported by
 // the most recent Import call.
 func (codec *Codec) TransferLayout(model *graph.Model) error {
 	if model == nil || len(codec.nodeJSON) != len(model.Nodes) {
 		return fmt.Errorf("model was not imported by this codec")
 	}
+	coordinates, err := codec.coordinates(model)
+	if err != nil {
+		return err
+	}
 	for index := range model.Nodes {
 		output := codec.nodeJSON[index]
 		if output == nil {
 			return fmt.Errorf("node binding %d is missing", index)
 		}
-		transferShape(&model.Nodes[index].Shape, &output.X, &output.Y, &output.Width, &output.Height)
+		var offset geometry.Point
+		if parent := model.Nodes[index].Parent; parent != nil && coordinates.nodeShapeMode[int(*parent)] == "ROOT" {
+			offset = coordinates.nodeGlobal[int(*parent)]
+		}
+		transferShape(&model.Nodes[index].Shape, offset, &output.X, &output.Y, &output.Width, &output.Height)
 	}
 	for index := range model.Ports {
 		output := codec.portJSON[index]
 		if output == nil {
 			return fmt.Errorf("port binding %d is missing", index)
 		}
-		transferShape(&model.Ports[index].Shape, &output.X, &output.Y, &output.Width, &output.Height)
+		parent := int(model.Ports[index].Parent)
+		var offset geometry.Point
+		if coordinates.nodeShapeMode[parent] == "ROOT" {
+			offset = coordinates.nodeGlobal[parent]
+		}
+		transferShape(&model.Ports[index].Shape, offset, &output.X, &output.Y, &output.Width, &output.Height)
 	}
 	for index := range model.Labels {
 		output := codec.labelJSON[index]
 		if output == nil {
 			return fmt.Errorf("label binding %d is missing", index)
 		}
-		transferShape(&model.Labels[index].Shape, &output.X, &output.Y, &output.Width, &output.Height)
+		offset := codec.labelOutputOffset(model, coordinates, &model.Labels[index])
+		transferShape(&model.Labels[index].Shape, offset, &output.X, &output.Y, &output.Width, &output.Height)
 	}
 	for edgeIndex := range model.Edges {
 		edgeID := graph.EdgeID(edgeIndex)
 		edge := model.Edge(edgeID)
+		offset := codec.edgeOutputOffset(model, coordinates, edgeID)
 		output := codec.edgeJSON[edgeIndex]
 		if output == nil {
 			return fmt.Errorf("edge binding %d is missing", edgeIndex)
@@ -589,11 +798,11 @@ func (codec *Codec) TransferLayout(model *graph.Model) error {
 		for position, sectionID := range edge.Sections {
 			section := model.Section(sectionID)
 			sectionOutput := sections[position]
-			start, end := toJSONPoint(section.Start), toJSONPoint(section.End)
+			start, end := toJSONPoint(section.Start.Add(offset)), toJSONPoint(section.End.Add(offset))
 			sectionOutput.StartPoint, sectionOutput.EndPoint = &start, &end
 			sectionOutput.BendPoints = make([]graphjson.Point, len(section.BendPoints))
 			for index, point := range section.BendPoints {
-				sectionOutput.BendPoints[index] = toJSONPoint(point)
+				sectionOutput.BendPoints[index] = toJSONPoint(point.Add(offset))
 			}
 			if len(section.BendPoints) == 0 {
 				sectionOutput.BendPoints = nil
@@ -610,22 +819,25 @@ func (codec *Codec) TransferLayout(model *graph.Model) error {
 		if points, found := graph.TryGet(&edge.Properties, JunctionPoints); found {
 			output.JunctionPoints = make([]graphjson.Point, len(points))
 			for index, point := range points {
-				output.JunctionPoints[index] = toJSONPoint(point)
+				output.JunctionPoints[index] = toJSONPoint(point.Add(offset))
 			}
 		}
-		if edge.ContainingNode != nil {
-			container := codec.nodeJSON[int(*edge.ContainingNode)].ID
-			output.Container = graphjson.IDPtr(container)
-		} else {
-			output.Container = nil
+		originalParent := int(codec.edgeParents[edgeIndex])
+		if coordinates.nodeEdgeMode[originalParent] == "CONTAINER" {
+			if edge.ContainingNode != nil {
+				container := codec.nodeJSON[int(*edge.ContainingNode)].ID
+				output.Container = graphjson.IDPtr(container)
+			} else {
+				output.Container = nil
+			}
 		}
 	}
 	return nil
 }
 
-func transferShape(shape *graph.Shape, x, y, width, height **float64) {
-	*x = graphjson.Float64(shape.X)
-	*y = graphjson.Float64(shape.Y)
+func transferShape(shape *graph.Shape, offset geometry.Point, x, y, width, height **float64) {
+	*x = graphjson.Float64(shape.X + offset.X)
+	*y = graphjson.Float64(shape.Y + offset.Y)
 	*width = graphjson.Float64(shape.Width)
 	*height = graphjson.Float64(shape.Height)
 }

@@ -70,7 +70,26 @@ func clipVector(vector geometry.Point, width, height float64) geometry.Point {
 	if math.Abs(vector.Y) > halfHeight {
 		yScale = halfHeight / math.Abs(vector.Y)
 	}
-	return vector.Scale(math.Min(xScale, yScale))
+	scale := math.Min(xScale, yScale)
+	return geometry.Point{X: float64(vector.X * scale), Y: float64(vector.Y * scale)}
+}
+
+func sporeVectorLength(vector geometry.Point) float64 {
+	// Preserve KVector.length's generated-JavaScript operation boundaries.
+	xSquared := float64(vector.X * vector.X)
+	ySquared := float64(vector.Y * vector.Y)
+	return math.Sqrt(xSquared + ySquared)
+}
+
+func sporeScaleToLength(vector geometry.Point, target float64) geometry.Point {
+	length := sporeVectorLength(vector)
+	if length > 0 {
+		vector.X = float64(vector.X / length)
+		vector.Y = float64(vector.Y / length)
+	}
+	vector.X = float64(vector.X * target)
+	vector.Y = float64(vector.Y * target)
+	return vector
 }
 
 func rectangleEdges(rect geometry.Rectangle) []*tEdgePoint {

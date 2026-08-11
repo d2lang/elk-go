@@ -177,7 +177,7 @@ func TestCandidateOptionBehaviorParity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := Differential(ctx, runner, fixture, elk.LayoutJSON, DefaultTolerance); err != nil {
+			if err := Differential(ctx, runner, fixture, elk.LayoutJSON, ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, fixture)
 			}
 		})

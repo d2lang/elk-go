@@ -26,8 +26,8 @@ func TestWalkerPlacementRetainsMrTreeChildOrder(t *testing.T) {
 	g.addDummyChild(root, second)
 
 	computeFan(root)
-	orderNodes(root)
-	computeLevelHeights(root)
+	orderNodes(root, "FAN")
+	computeLevelHeights(root, "DOWN")
 	computeNeighbors(root)
 	placeNodes(g, root)
 

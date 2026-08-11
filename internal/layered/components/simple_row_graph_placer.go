@@ -24,11 +24,13 @@ var (
 		"org.eclipse.elk.layered.compaction.connectedComponents", func() bool { return false })
 )
 
-// simpleRowGraphPlacer is ELK 0.8.1's SimpleRowGraphPlacer. It is used when
-// none of the components contains an external-port dummy.
-type simpleRowGraphPlacer struct{}
+// simpleRowGraphPlacer ports ELK 0.12.0's SimpleRowGraphPlacer and, when
+// modelOrder is set, ModelOrderRowGraphPlacer.
+type simpleRowGraphPlacer struct {
+	modelOrder bool
+}
 
-func (*simpleRowGraphPlacer) combine(
+func (placer *simpleRowGraphPlacer) combine(
 	arena *layered.LGraphArena,
 	components []layered.LGraphID,
 	targetID layered.LGraphID,
@@ -57,7 +59,9 @@ func (*simpleRowGraphPlacer) combine(
 		}
 	}
 
-	if componentOrdering(&target.Properties) == componentOrderingNone {
+	if !placer.modelOrder && basegraph.Get(
+		&target.Properties, layered.ComponentOrdering,
+	) == layered.ComponentOrderingNone {
 		for _, componentID := range components {
 			component := arena.Graph(componentID)
 			componentPriority := 0
@@ -96,6 +100,31 @@ func (*simpleRowGraphPlacer) combine(
 	componentSpacing := basegraph.Get(
 		&target.Properties, layered.SpacingComponentComponent)
 
+	if placer.modelOrder {
+		placeComponentsInModelOrder(
+			arena, components, target, maxRowWidth, componentSpacing)
+	} else {
+		placeComponentsInRows(arena, components, target, maxRowWidth, componentSpacing)
+	}
+
+	if basegraph.Get(&firstComponent.Properties, connectedComponentsCompaction) {
+		compactedSize, err := compactConnectedComponents(
+			arena, components, componentSpacing)
+		if err != nil {
+			return err
+		}
+		target.Size = compactedSize
+	}
+	moveGraphs(arena, targetID, components, geometry.Point{})
+	return nil
+}
+
+func placeComponentsInRows(
+	arena *layered.LGraphArena,
+	components []layered.LGraphID,
+	target *layered.LGraph,
+	maxRowWidth, componentSpacing float64,
+) {
 	xPosition, yPosition := 0.0, 0.0
 	highestBox, broadestRow := 0.0, componentSpacing
 	for _, componentID := range components {
@@ -115,15 +144,54 @@ func (*simpleRowGraphPlacer) combine(
 		xPosition += component.Size.X + componentSpacing
 	}
 	target.Size = geometry.Point{X: broadestRow, Y: yPosition + highestBox}
+}
 
-	if basegraph.Get(&firstComponent.Properties, connectedComponentsCompaction) {
-		compactedSize, err := compactConnectedComponents(
-			arena, components, componentSpacing)
-		if err != nil {
-			return err
+// placeComponentsInModelOrder is ELK 0.12.0's ModelOrderRowGraphPlacer.
+// Components arrive sorted by their smallest node model order. External-port
+// sides then constrain row breaks without reordering the components.
+func placeComponentsInModelOrder(
+	arena *layered.LGraphArena,
+	components []layered.LGraphID,
+	target *layered.LGraph,
+	maxRowWidth, componentSpacing float64,
+) {
+	xPosition, yPosition := 0.0, 0.0
+	highestBox, broadestRow := 0.0, componentSpacing
+	startXOfRow := 0.0
+	var lastComponent *layered.LGraph
+	for _, componentID := range components {
+		component := arena.Graph(componentID)
+		sides := basegraph.Get(&component.Properties, layered.ExternalPortConnections)
+		lastHasEast := lastComponent != nil && hasExternalPortSide(
+			basegraph.Get(&lastComponent.Properties, layered.ExternalPortConnections),
+			layered.EastSide,
+		)
+		if xPosition+component.Size.X > maxRowWidth &&
+			!hasExternalPortSide(sides, layered.NorthSide) ||
+			lastHasEast || hasExternalPortSide(sides, layered.WestSide) {
+			xPosition = startXOfRow
+			yPosition += highestBox + componentSpacing
+			highestBox = 0
 		}
-		target.Size = compactedSize
+		if hasExternalPortSide(sides, layered.NorthSide) {
+			xPosition = broadestRow + componentSpacing
+		}
+		offsetGraph(arena, componentID, geometry.Point{
+			X: xPosition + component.Offset.X,
+			Y: yPosition + component.Offset.Y,
+		})
+		broadestRow = math.Max(broadestRow, xPosition+component.Size.X)
+		if hasExternalPortSide(sides, layered.SouthSide) {
+			startXOfRow = math.Max(startXOfRow, xPosition+component.Size.X+componentSpacing)
+		}
+		component.Offset = geometry.Point{}
+		highestBox = math.Max(highestBox, component.Size.Y)
+		xPosition += component.Size.X + componentSpacing
+		lastComponent = component
 	}
-	moveGraphs(arena, targetID, components, geometry.Point{})
-	return nil
+	target.Size = geometry.Point{X: broadestRow, Y: yPosition + highestBox}
+}
+
+func hasExternalPortSide(sides uint8, side layered.PortSide) bool {
+	return sides&(uint8(1)<<uint8(side)) != 0
 }

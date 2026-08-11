@@ -3,7 +3,29 @@
 `elk-go` is produced and maintained by the elk-go contributors. It is a Go
 port of behavior and source from the Eclipse Layout Kernel project and ELK.js.
 
-## Upstream sources
+## Target upstream sources
+
+- Eclipse Layout Kernel 0.12.0
+  - https://github.com/eclipse-elk/elk
+  - commit `323312916048544e4e594eab3303cdb0d01e2929`
+- ELK.js 0.12.0
+  - https://github.com/kieler/elkjs
+  - commit `ff5771d7165445c42c408bb8a090c8035272218c`
+- GWT 2.11.0 Java runtime emulation
+  - https://github.com/gwtproject/gwt
+  - commit `7f76f0f2b5b1b028d2d870782048e44402637fb0`
+  - Copyright 2008 Google Inc.
+  - Apache License 2.0; see `LICENSE.apache-2.0`
+- V8 IEEE-754 routines as bundled by Node.js 24.19.0
+  - https://github.com/nodejs/node
+  - Node.js commit `cdc1b38d40cb567b7ad0b39c86addf830a0af0ae`
+  - V8 version `13.6.233.17-node.51`
+  - Copyright 2016 the V8 project authors
+  - BSD 3-Clause License; see `LICENSE.v8-bsd`
+  - Adapted from fdlibm; the Sun Microsystems permission notice is preserved
+    in `internal/javacompat/jsmath.go`
+
+## Historical implementation sources
 
 - Eclipse Layout Kernel 0.8.1
   - https://github.com/eclipse-elk/elk
@@ -35,27 +57,29 @@ repository histories and the copyright headers preserved in the ported files.
 ## Declared project license
 
 The upstream ELK projects and this port are made available under the Eclipse
-Public License 2.0. The two Go adaptations of GWT runtime routines identified
-in `PROVENANCE.md` remain available under the Apache License 2.0. The source
-code for this port is available at https://github.com/d2lang/elk-go.
+Public License 2.0. ELK 0.12.0 and ELK.js 0.12.0 also declare the
+GPL-3.0-or-later secondary-license option. The two Go adaptations of GWT
+runtime routines identified in `PROVENANCE.md` remain available under the
+Apache License 2.0. The V8/fdlibm compatibility routines retain their BSD
+3-Clause and SunPro terms. The source code for this port is available at
+https://github.com/d2lang/elk-go.
 
 SPDX-License-Identifier: EPL-2.0
 
 ## Upstream third-party content notice
 
-Eclipse Layout Kernel 0.8.1 declares the following third-party content in its
+Eclipse Layout Kernel 0.12.0 declares the following third-party content in its
 project notice. Elk-go has no third-party Go module dependencies; this list is
-preserved as part of the upstream notice for the source from which the port was
-derived. Elk-go also adapts GWT 2.9.0's `java.util.PriorityQueue` and legacy
+preserved as part of the exact upstream notice for the target source release.
+Elk-go also adapts GWT 2.11.0's `java.util.PriorityQueue` and legacy
 `java.util.Arrays` merge sort; their Google copyright and Apache 2.0 license
 are preserved in the corresponding Go files and `LICENSE.apache-2.0`.
+The V8/fdlibm trigonometric compatibility routines preserve the applicable
+V8 BSD 3-Clause license and fdlibm Sun Microsystems permission notice.
 
-- ANTLR Runtime only 3.2: New BSD license
-- Apache Commons Logging Jar 1.1.1: Apache License 2.0
-- Apache Log4J 1.2.8: Apache License 2.0
-- ASM 5.0.1: New BSD license
-- Google Guava 15.0.0: Apache License 2.0
-- Google Guice / Inject Core API 3.0.0: Apache License 2.0
+- Dependencies captured by ELK's license-check-plugin are referenced by the
+  upstream `DEPENDENCIES` artifact.
+- libavoid 0.3.1: GNU Lesser General Public License 2.1
 - Ptolemy demo models: Ptolemy License
 
 ## Cryptography

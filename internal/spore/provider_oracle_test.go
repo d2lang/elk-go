@@ -25,6 +25,11 @@ import (
 	"github.com/d2lang/elk-go/internal/spore"
 )
 
+// Four non-orthogonal MAXIMUM_SPANNING_TREE cases differ from official elkjs
+// 0.12.0 only in the final binary rounding of one coordinate. The largest
+// observed delta is 2.84217094304e-14; graph structure is exact.
+var sporeCompactionOracleULPTolerance = oracle.Tolerance{Absolute: 3e-14}
+
 func sporeLayoutJSON(input []byte) ([]byte, error) {
 	decoder := json.NewDecoder(bytes.NewReader(input))
 	decoder.UseNumber()
@@ -56,31 +61,31 @@ func sporeLayoutJSON(input []byte) ([]byte, error) {
 	return json.Marshal(&value)
 }
 
-func TestFrozenELKJS082SporeCompaction(t *testing.T) {
+func TestOfficialELKJS0120SporeCompaction(t *testing.T) {
 	input := []byte(`{"id":"root","x":0,"y":0,"width":0,"height":0,"layoutOptions":{"elk.algorithm":"sporeCompaction","elk.padding":"[top=8,left=8,bottom=8,right=8]","elk.spacing.nodeNode":8,"elk.processingOrder.treeConstruction":"MINIMUM_SPANNING_TREE","elk.processingOrder.spanningTreeCostFunction":"CIRCLE_UNDERLAP","elk.processingOrder.rootSelection":"FIXED","elk.processingOrder.preferredRoot":"a","elk.compaction.orthogonal":false},"children":[{"id":"a","x":0,"y":0,"width":10,"height":10},{"id":"b","x":100,"y":0,"width":10,"height":10}],"edges":[{"id":"e","sources":["a"],"targets":["b"]}]}`)
 	want := []byte(`{"id":"root","x":0,"y":0,"width":44,"height":26,"layoutOptions":{"elk.algorithm":"sporeCompaction","elk.padding":"[top=8,left=8,bottom=8,right=8]","elk.spacing.nodeNode":8,"elk.processingOrder.treeConstruction":"MINIMUM_SPANNING_TREE","elk.processingOrder.spanningTreeCostFunction":"CIRCLE_UNDERLAP","elk.processingOrder.rootSelection":"FIXED","elk.processingOrder.preferredRoot":"a","elk.compaction.orthogonal":false},"children":[{"id":"a","x":8,"y":8,"width":10,"height":10},{"id":"b","x":26,"y":8,"width":10,"height":10}],"edges":[{"id":"e","sources":["a"],"targets":["b"],"sections":[{"id":"e_s0","startPoint":{"x":18,"y":13},"endPoint":{"x":26,"y":13}}],"container":"root"}]}`)
 	got, err := sporeLayoutJSON(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := oracle.CompareJSON(want, got, oracle.DefaultTolerance); err != nil {
+	if err := oracle.CompareJSON(want, got, oracle.ExactTolerance); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestFrozenELKJS082SporeOverlap(t *testing.T) {
+func TestOfficialELKJS0120SporeOverlap(t *testing.T) {
 	input := []byte(`{"id":"root","x":0,"y":0,"width":120,"height":100,"layoutOptions":{"elk.algorithm":"sporeOverlap","elk.padding":"[top=8,left=8,bottom=8,right=8]","elk.spacing.nodeNode":8,"elk.overlapRemoval.maxIterations":64,"elk.overlapRemoval.runScanline":true},"children":[{"id":"a","x":0,"y":0,"width":20,"height":20},{"id":"b","x":10,"y":5,"width":30,"height":10},{"id":"c","x":60,"y":40,"width":15,"height":15}],"edges":[{"id":"e","sources":["a"],"targets":["b"]}]}`)
 	want := []byte(`{"id":"root","x":0,"y":0,"width":109,"height":71,"layoutOptions":{"elk.algorithm":"sporeOverlap","elk.padding":"[top=8,left=8,bottom=8,right=8]","elk.spacing.nodeNode":8,"elk.overlapRemoval.maxIterations":64,"elk.overlapRemoval.runScanline":true},"children":[{"id":"a","x":8,"y":8,"width":20,"height":20},{"id":"b","x":36,"y":13,"width":30,"height":10},{"id":"c","x":86,"y":48,"width":15,"height":15}],"edges":[{"id":"e","sources":["a"],"targets":["b"],"sections":[{"id":"e_s0","startPoint":{"x":28,"y":18},"endPoint":{"x":36,"y":18}}],"container":"root"}]}`)
 	got, err := sporeLayoutJSON(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := oracle.CompareJSON(want, got, oracle.DefaultTolerance); err != nil {
+	if err := oracle.CompareJSON(want, got, oracle.ExactTolerance); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestLiveELKJS082SporeParity(t *testing.T) {
+func TestOfficialELKJS0120SporeParity(t *testing.T) {
 	runner := oracle.DefaultRunner()
 	if err := runner.Check(); err != nil {
 		t.Skip(err)
@@ -93,13 +98,13 @@ func TestLiveELKJS082SporeParity(t *testing.T) {
 		`{"id":"root","width":240,"height":80,"layoutOptions":{"elk.algorithm":"sporeCompaction","elk.processingOrder.spanningTreeCostFunction":"CENTER_DISTANCE","elk.processingOrder.rootSelection":"FIXED","elk.processingOrder.preferredRoot":"c"},"children":[{"id":"a","x":0,"y":20,"width":20,"height":20},{"id":"b","x":60,"y":20,"width":20,"height":20},{"id":"c","x":120,"y":20,"width":20,"height":20},{"id":"d","x":180,"y":20,"width":20,"height":20}]}`,
 	}
 	for _, input := range fixtures {
-		if err := oracle.Differential(context.Background(), runner, []byte(input), sporeLayoutJSON, oracle.DefaultTolerance); err != nil {
+		if err := oracle.Differential(context.Background(), runner, []byte(input), sporeLayoutJSON, oracle.ExactTolerance); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
-func TestLiveELKJS082SporeOptionMatrix(t *testing.T) {
+func TestOfficialELKJS0120SporeOptionMatrix(t *testing.T) {
 	runner := oracle.DefaultRunner()
 	if err := runner.Check(); err != nil {
 		t.Skip(err)
@@ -142,7 +147,7 @@ func TestLiveELKJS082SporeOptionMatrix(t *testing.T) {
 							{"id":"de","sources":["d"],"targets":["e"]}
 						]
 					}`, tree, cost, orthogonal))
-					if err := oracle.Differential(context.Background(), runner, input, sporeLayoutJSON, oracle.DefaultTolerance); err != nil {
+					if err := oracle.Differential(context.Background(), runner, input, sporeLayoutJSON, sporeCompactionOracleULPTolerance); err != nil {
 						t.Fatalf("%v\ninput: %s", err, input)
 					}
 				})
@@ -171,7 +176,7 @@ func TestLiveELKJS082SporeOptionMatrix(t *testing.T) {
 						{"id":"e","x":141,"y":96,"width":22,"height":28}
 					]
 				}`, scanline, iterations))
-				if err := oracle.Differential(context.Background(), runner, input, sporeLayoutJSON, oracle.DefaultTolerance); err != nil {
+				if err := oracle.Differential(context.Background(), runner, input, sporeLayoutJSON, oracle.ExactTolerance); err != nil {
 					t.Fatalf("%v\ninput: %s", err, input)
 				}
 			})

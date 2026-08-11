@@ -21,9 +21,15 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
+// A small set of Layered strategy probes differ from official elkjs 0.12.0
+// only in the final binary rounding of a coordinate, including spline
+// post-compaction and generated strategy cases. The largest observed delta is
+// 1.13686837722e-13; structure, order, and routing are exact.
+var layeredOracleULPTolerance = oracle.Tolerance{Absolute: 2e-13}
+
 // TestLayeredStrategyOracleParity pins every translated alternate phase to
-// the frozen elkjs 0.8.2 / ELK 0.8.1 oracle. It is opt-in because normal
-// module consumers do not have the frozen JavaScript artifact or Node.js.
+// official elkjs 0.12.0. It is opt-in because normal module consumers do not
+// have the pinned JavaScript artifact or Node.js.
 func TestLayeredStrategyOracleParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_LAYERED_STRATEGIES") != "1" {
 		t.Skip("set ELK_GO_ORACLE_LAYERED_STRATEGIES=1 to run Layered strategy differentials")
@@ -67,7 +73,7 @@ func TestLayeredStrategyOracleParity(t *testing.T) {
 			}`, test.option, test.value, test.body))
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, input)
 			}
 		})
@@ -96,7 +102,7 @@ func TestLayeredSplineOracleParity(t *testing.T) {
 			}`, mode, crossingStrategyBody))
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, input)
 			}
 		})
@@ -139,7 +145,7 @@ func TestLayeredWrappingOracleParity(t *testing.T) {
 			}`, test.routing, test.strategy, test.cutting, wrappingStrategyBody))
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, input)
 			}
 		})
@@ -174,7 +180,7 @@ func TestLayeredSemiInteractiveOracleParity(t *testing.T) {
 	}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+	if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 		t.Fatalf("%v\ninput: %s", err, input)
 	}
 }
@@ -203,7 +209,7 @@ func TestLayeredExternalPortComponentGroupOracleParity(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			input := []byte(test.input)
-			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, input)
 			}
 		})
@@ -244,7 +250,7 @@ func TestLayeredExternalPortComponentCompactionOracleParity(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if err := oracle.Differential(
-				ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance,
+				ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance,
 			); err != nil {
 				t.Fatalf("%v\ninput: %s", err, input)
 			}
@@ -311,7 +317,7 @@ func TestLayeredStrategyRandomOracleParity(t *testing.T) {
 					t.Fatal(err)
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				err = oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance)
+				err = oracle.Differential(ctx, runner, input, elk.LayoutJSON, layeredOracleULPTolerance)
 				cancel()
 				if err != nil {
 					t.Fatalf("seed %d: %v\ninput: %s", seed, err, input)

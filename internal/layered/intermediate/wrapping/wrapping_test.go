@@ -10,6 +10,7 @@
 package wrapping
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/d2lang/elk-go/internal/geometry"
@@ -50,6 +51,9 @@ func TestMultiEdgeInserterCreatesPairedBreakingPoints(t *testing.T) {
 	graph := arena.Graph(graphID)
 	basegraph.Set(&graph.Properties, layered.WrappingCuttingStrategy, layered.CuttingARD)
 	basegraph.Set(&graph.Properties, layered.WrappingMultiEdgeImproveCuts, false)
+	for index := range arena.Edges {
+		basegraph.Set(&arena.Edges[index].Properties, layered.ModelOrder, index+10)
+	}
 
 	InsertBreakingPoints(arena, graphID)
 	starts, ends := 0, 0
@@ -57,6 +61,13 @@ func TestMultiEdgeInserterCreatesPairedBreakingPoints(t *testing.T) {
 		for _, nodeID := range arena.Layer(layerID).Nodes {
 			if IsBreakingPointStart(arena, nodeID) {
 				starts++
+				info := basegraph.Get(&arena.Node(nodeID).Properties, breakingPointInfo)
+				want := basegraph.Get(&arena.Edge(info.OriginalEdge).Properties, layered.ModelOrder)
+				for _, splitEdge := range []layered.LEdgeID{info.NodeStartEdge, info.StartEndEdge} {
+					if got := basegraph.Get(&arena.Edge(splitEdge).Properties, layered.ModelOrder); got != want {
+						t.Fatalf("split edge %d model order = %d, want %d", splitEdge, got, want)
+					}
+				}
 			}
 			if IsBreakingPointEnd(arena, nodeID) {
 				ends++
@@ -65,6 +76,22 @@ func TestMultiEdgeInserterCreatesPairedBreakingPoints(t *testing.T) {
 	}
 	if starts == 0 || starts != ends {
 		t.Fatalf("breaking points = %d starts, %d ends", starts, ends)
+	}
+}
+
+func TestMultiEdgeManualWithoutCutsDoesNotFallThroughToARD(t *testing.T) {
+	arena, graphID, _ := pathGraph(8)
+	graph := arena.Graph(graphID)
+	basegraph.Set(&graph.Properties, layered.WrappingCuttingStrategy, layered.CuttingManual)
+	beforeLayers := append([]layered.LayerID(nil), graph.Layers...)
+	beforeNodes, beforeEdges := len(arena.Nodes), len(arena.Edges)
+
+	InsertBreakingPoints(arena, graphID)
+
+	if !reflect.DeepEqual(graph.Layers, beforeLayers) ||
+		len(arena.Nodes) != beforeNodes || len(arena.Edges) != beforeEdges {
+		t.Fatalf("manual wrapping without cuts mutated graph: layers %v -> %v, nodes %d -> %d, edges %d -> %d",
+			beforeLayers, graph.Layers, beforeNodes, len(arena.Nodes), beforeEdges, len(arena.Edges))
 	}
 }
 

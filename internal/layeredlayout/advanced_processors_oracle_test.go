@@ -19,7 +19,8 @@ import (
 )
 
 // TestAdvancedLayeredProcessorOracleParity pins the optional post-layering
-// and post-routing processors to ELK 0.8.1, including every public strategy.
+// and post-routing processors to official elkjs 0.12.0, including every
+// public strategy.
 func TestAdvancedLayeredProcessorOracleParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_LAYERED_STRATEGIES") != "1" {
 		t.Skip("set ELK_GO_ORACLE_LAYERED_STRATEGIES=1 to run Layered strategy differentials")
@@ -103,7 +104,11 @@ func TestAdvancedLayeredProcessorOracleParity(t *testing.T) {
 			}`, test.options, test.body))
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+			tolerance := oracle.ExactTolerance
+			if strings.HasPrefix(test.name, "post-compaction-SPLINES-") {
+				tolerance = layeredOracleULPTolerance
+			}
+			if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, tolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, input)
 			}
 		})
@@ -172,7 +177,7 @@ func TestAdvancedLayeredProcessorRandomOracleParity(t *testing.T) {
 					t.Fatal(err)
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-				err = oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance)
+				err = oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance)
 				cancel()
 				if err != nil {
 					t.Fatalf("seed %d: %v\ninput: %s", seed, err, input)

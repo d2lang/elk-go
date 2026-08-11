@@ -7,7 +7,7 @@
 //
 // SPDX-License-Identifier: EPL-2.0
 
-// Package box implements org.eclipse.elk.box from ELK 0.8.1.
+// Package box implements org.eclipse.elk.box from ELK 0.12.0.
 package box
 
 import (
@@ -115,6 +115,10 @@ func placeBoxes(
 	mean := totalArea / float64(len(boxes))
 	standardDeviation := areaStdDev(model, boxes, mean)
 	totalArea += float64(len(boxes)) * standardDeviation
+	// ELK 0.12 includes padding in its target-area estimate. Preserve the
+	// source's sequential square-root updates (including its right-only term).
+	totalArea += math.Sqrt(totalArea) * (padding.Bottom + padding.Top)
+	totalArea += math.Sqrt(totalArea) * padding.Right
 	maxRowWidth = math.Max(maxRowWidth, math.Sqrt(totalArea*aspect)) + padding.Left
 
 	x, y := padding.Left, padding.Top

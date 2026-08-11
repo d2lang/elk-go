@@ -9,6 +9,6 @@ licensed under EPL-2.0.
 | `options.go` | `Radial.melk` and the Java enums in `options/`; the option registry values generated upstream from `Radial.melk` are represented directly in Go |
 | `provider.go` | `Radial.melk`, `RadialLayoutProvider.java`, `RadialLayoutPhases.java`, `RadialUtil.java`; `p1position/EadesRadial.java`, `p1position/wedge/AnnulusWedgeByLeafs.java`, `AnnulusWedgeByNodeSpace.java`; `sorting/IDSorter.java`, `PolarCoordinateSorter.java`; `intermediate/CalculateGraphSize.java`; `intermediate/optimization/CrossingMinimizationPosition.java`, `EdgeLengthOptimization.java`, `EdgeLengthPositionOptimization.java`; `intermediate/overlaps/RadiusExtensionOverlapRemoval.java`; `intermediate/compaction/AbstractRadiusExtensionCompaction.java`, `AnnulusWedgeCompaction.java`, `GeneralCompactor.java`, `RadialCompaction.java`; and `p2routing/StraightLineEdgeRouter.java` |
 | `provider_test.go` | Source-shaped tests derived from `EadesRadial.java` and `Radial.melk` |
-| `provider_oracle_test.go` | Original differential fixtures targeting the frozen elkjs 0.8.2 bundle |
+| `provider_oracle_test.go` | Differential fixtures now verified against pinned official elkjs 0.12.0; historical implementation expectations originated with the 0.8.2 bundle |
 
 No code in this directory is copied from elkrs or a newer ELK release.

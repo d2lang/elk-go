@@ -22,7 +22,7 @@ import (
 )
 
 // TestCandidateCuratedParity compares the native implementation with the
-// frozen ELK.js 0.8.2 oracle. It is opt-in because a normal source checkout
+// official ELK.js 0.12.0 oracle. It is opt-in because a normal source checkout
 // need not contain Node.js or the reference JavaScript artifact.
 func TestCandidateCuratedParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_PARITY") != "1" {
@@ -43,9 +43,13 @@ func TestCandidateCuratedParity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			input, err = PrepareD2ELK012Input(input)
+			if err != nil {
+				t.Fatal(err)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := Differential(ctx, runner, input, elk.LayoutJSON, DefaultTolerance); err != nil {
+			if err := Differential(ctx, runner, input, elk.LayoutJSON, ExactTolerance); err != nil {
 				t.Fatal(err)
 			}
 		})
@@ -66,6 +70,12 @@ func TestCandidateGenericRandomParity(t *testing.T) {
 	testCandidateRandomParity(t, "ELK_GO_ORACLE_RANDOM_GENERIC", false)
 }
 
+// genericLayeredRandomTolerance is deliberately much narrower than the
+// general-purpose DefaultTolerance. In the first 100 deterministic generic
+// Layered seeds, 67 are bit-exact and the other 33 differ only at clipped edge
+// endpoints, by at most 1.13686837722e-13. D2-profile seeds remain bit-exact.
+var genericLayeredRandomTolerance = Tolerance{Absolute: 2e-13}
+
 func testCandidateRandomParity(t *testing.T, environment string, d2Options bool) {
 	value := os.Getenv(environment)
 	if value == "" {
@@ -78,6 +88,10 @@ func testCandidateRandomParity(t *testing.T, environment string, d2Options bool)
 	runner := DefaultRunner()
 	if err := runner.Check(); err != nil {
 		t.Fatal(err)
+	}
+	tolerance := ExactTolerance
+	if !d2Options {
+		tolerance = genericLayeredRandomTolerance
 	}
 	for index := 0; index < count; index++ {
 		seed := uint64(index)
@@ -93,7 +107,7 @@ func testCandidateRandomParity(t *testing.T, environment string, d2Options bool)
 		t.Run(fmt.Sprintf("seed-%d", seed), func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := Differential(ctx, runner, input, elk.LayoutJSON, DefaultTolerance); err != nil {
+			if err := Differential(ctx, runner, input, elk.LayoutJSON, tolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, input)
 			}
 		})
@@ -131,9 +145,13 @@ func TestCandidateD2CorpusParity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			input, err = PrepareD2ELK012Input(input)
+			if err != nil {
+				t.Fatal(err)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			if err := Differential(ctx, runner, input, elk.LayoutJSON, DefaultTolerance); err != nil {
+			if err := Differential(ctx, runner, input, elk.LayoutJSON, ExactTolerance); err != nil {
 				t.Fatal(err)
 			}
 		})

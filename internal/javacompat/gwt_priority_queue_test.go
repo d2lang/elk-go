@@ -27,8 +27,9 @@ func TestGWTPriorityQueueBulkHeapAndEqualSiftOrder(t *testing.T) {
 		value, _ := queue.Poll()
 		got = append(got, value.name)
 	}
-	// Frozen from the GWT heap's recursive makeHeap and strict mergeHeaps
-	// comparison; OpenJDK's equal-element order is different.
+	// Frozen from GWT 2.11.0's recursive makeHeap and strict mergeHeaps
+	// comparison. The vector is unchanged from GWT 2.9.0; OpenJDK's
+	// equal-element order is different.
 	want := []string{"e", "b", "c", "d", "a"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("poll order = %v, want %v", got, want)

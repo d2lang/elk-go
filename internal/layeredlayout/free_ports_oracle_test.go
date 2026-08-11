@@ -18,9 +18,9 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
-// TestImplicitFreePortOrderOracleParity freezes ELK 0.8.1's observable
-// assignment of model-order edges to implicit FREE ports. The two incoming
-// ports on n1 deliberately exercise PortListSorter's short-range behavior;
+// TestImplicitFreePortOrderOracleParity pins the model-order-to-implicit-FREE-
+// port assignment retained by official elkjs 0.12.0 from ELK 0.8.1. The two
+// incoming ports on n1 deliberately exercise PortListSorter's short-range behavior;
 // swapping them changes both n1's placement and the routed edge endpoints.
 func TestImplicitFreePortOrderOracleParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_LAYERED_STRATEGIES") != "1" {
@@ -53,7 +53,7 @@ func TestImplicitFreePortOrderOracleParity(t *testing.T) {
 	}`)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.DefaultTolerance); err != nil {
+	if err := oracle.Differential(ctx, runner, input, elk.LayoutJSON, oracle.ExactTolerance); err != nil {
 		t.Fatalf("%v\ninput: %s", err, input)
 	}
 }

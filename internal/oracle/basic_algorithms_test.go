@@ -18,7 +18,7 @@ import (
 )
 
 // TestCandidateBasicAlgorithmsParity pins one source-shaped fixture for each
-// utility provider to the frozen elkjs 0.8.2 / ELK 0.8.1 oracle. Random uses a
+// utility provider to the official elkjs 0.12.0 oracle. Random uses a
 // nonzero seed because zero intentionally requests a nondeterministic seed.
 func TestCandidateBasicAlgorithmsParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_BASIC") != "1" {
@@ -65,7 +65,7 @@ func TestCandidateBasicAlgorithmsParity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := Differential(ctx, runner, fixture, elk.LayoutJSON, DefaultTolerance); err != nil {
+			if err := Differential(ctx, runner, fixture, elk.LayoutJSON, ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, fixture)
 			}
 		})
@@ -97,7 +97,7 @@ func TestCandidateBoxPackingModesParity(t *testing.T) {
 			}`)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := Differential(ctx, runner, fixture, elk.LayoutJSON, DefaultTolerance); err != nil {
+			if err := Differential(ctx, runner, fixture, elk.LayoutJSON, ExactTolerance); err != nil {
 				t.Fatalf("%v\ninput: %s", err, fixture)
 			}
 		})

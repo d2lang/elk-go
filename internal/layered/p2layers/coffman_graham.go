@@ -16,7 +16,7 @@ import (
 )
 
 // CoffmanGrahamLayerer bounds the number of nodes per layer after computing
-// the exact ELK 0.8.1 transitive reduction and priority topological order.
+// the exact ELK 0.12.0 transitive reduction and priority topological order.
 type CoffmanGrahamLayerer struct {
 	nodeMark           []bool
 	edgeMark           []bool
@@ -56,7 +56,7 @@ func (layerer *CoffmanGrahamLayerer) Process(arena *layered.LGraphArena, graphID
 	layerer.transitiveReduction(arena, graphID)
 
 	sources := javacompat.NewGWTPriorityQueue(func(first, second layered.LNodeID) int {
-		return layerer.compareNodesInTopologicalOrder(first, second)
+		return layerer.compareNodesInTopologicalOrder(arena, first, second)
 	})
 	for _, nodeID := range graph.LayerlessNodes {
 		for _, edgeID := range arena.NodeIncomingEdges(nodeID) {
@@ -139,7 +139,10 @@ func (layerer *CoffmanGrahamLayerer) Process(arena *layered.LGraphArena, graphID
 	return nil
 }
 
-func (layerer *CoffmanGrahamLayerer) compareNodesInTopologicalOrder(first, second layered.LNodeID) int {
+func (layerer *CoffmanGrahamLayerer) compareNodesInTopologicalOrder(
+	arena *layered.LGraphArena,
+	first, second layered.LNodeID,
+) int {
 	firstValues := layerer.inTopologicalOrder[first]
 	secondValues := layerer.inTopologicalOrder[second]
 	firstIndex, secondIndex := len(firstValues), len(secondValues)
@@ -153,13 +156,21 @@ func (layerer *CoffmanGrahamLayerer) compareNodesInTopologicalOrder(first, secon
 			return 1
 		}
 	}
-	// ELK 0.8.1 tests hasNext() after traversing each ListIterator backwards.
+	// ELK tests hasNext() after traversing each ListIterator backwards.
 	// Thus a non-empty iterator reports true after at least one previous() call,
 	// even when it is exhausted in the backwards direction. Preserve that
-	// seemingly unusual source (and elkjs) behavior exactly.
+	// seemingly unusual source (and elkjs) behavior exactly. ELK 0.12.0 adds
+	// node ID as the deterministic final criterion when both lists are empty.
 	firstHasNext := firstIndex < len(firstValues)
 	secondHasNext := secondIndex < len(secondValues)
 	if !firstHasNext && !secondHasNext {
+		firstID, secondID := arena.Node(first).ID, arena.Node(second).ID
+		if firstID < secondID {
+			return -1
+		}
+		if firstID > secondID {
+			return 1
+		}
 		return 0
 	}
 	if firstHasNext {

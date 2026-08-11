@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
 )
 
@@ -16,7 +17,7 @@ func TestGWTStableSortMatchesElkjsComparatorCallOrder(t *testing.T) {
 	values := []int{6, 5, 4, 3, 2, 1, 0}
 	type comparison struct{ first, second int }
 	var comparisons []comparison
-	gwtStableSort(values, func(first, second int) int {
+	javacompat.GWTStableSort(values, func(first, second int) int {
 		comparisons = append(comparisons, comparison{first, second})
 		return first - second
 	})
@@ -24,6 +25,7 @@ func TestGWTStableSortMatchesElkjsComparatorCallOrder(t *testing.T) {
 	if want := []int{0, 1, 2, 3, 4, 5, 6}; !reflect.DeepEqual(values, want) {
 		t.Fatalf("sorted values = %v, want %v", values, want)
 	}
+	// GWT 2.11.0 retains the same legacy merge-sort call trace as 2.9.0.
 	wantComparisons := []comparison{
 		{6, 5}, {6, 4}, {5, 4},
 		{3, 2}, {3, 1}, {2, 1}, {3, 0}, {2, 0}, {1, 0},
@@ -57,7 +59,7 @@ func TestSortByInputModelGroupsPortsByUltimateTarget(t *testing.T) {
 	if err := SortByInputModel(arena, graphID); err != nil {
 		t.Fatal(err)
 	}
-	if want := []layered.LPortID{portOneHigh, portOneLow, portTwo}; !reflect.DeepEqual(arena.Node(source).Ports, want) {
+	if want := []layered.LPortID{portOneLow, portOneHigh, portTwo}; !reflect.DeepEqual(arena.Node(source).Ports, want) {
 		t.Fatalf("source ports = %v, want %v", arena.Node(source).Ports, want)
 	}
 	if want := []layered.LNodeID{targetOne, targetTwo}; !reflect.DeepEqual(arena.Layer(secondLayer).Nodes, want) {

@@ -21,7 +21,7 @@ const (
 	PhaseEdgeRouting
 )
 
-// IntermediateProcessorStrategy declaration order is the exact ELK 0.8.1
+// IntermediateProcessorStrategy declaration order follows ELK 0.12.0.
 // enum order. LayoutProcessorConfiguration uses an EnumSet, so this order is
 // observable when processors from multiple phase configurations share a slot.
 type IntermediateProcessorStrategy uint8
@@ -53,6 +53,7 @@ const (
 	OneSidedGreedySwitch
 	TwoSidedGreedySwitch
 	SelfLoopPortRestorer
+	AlternatingLayerUnzipper
 	SingleEdgeGraphWrapper
 	InLayerConstraintProcessor
 	EndNodePortLabelManagementProcessor
@@ -66,6 +67,7 @@ const (
 	LabelSideSelector
 	HyperedgeDummyMerger
 	HierarchicalPortDummySizeProcessor
+	NodePlacementRepeater
 	LayerSizeAndGraphHeightCalculator
 	HierarchicalPortPositionProcessor
 	ConstraintsPostprocessor

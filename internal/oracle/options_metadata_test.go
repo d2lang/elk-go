@@ -28,7 +28,7 @@ type oracleOptionMetadata struct {
 	Targets []string `json:"targets"`
 }
 
-func TestFrozenKnownLayoutOptionsParity(t *testing.T) {
+func TestKnownLayoutOptionsParity(t *testing.T) {
 	if os.Getenv("ELK_GO_ORACLE_OPTIONS") != "1" {
 		t.Skip("set ELK_GO_ORACLE_OPTIONS=1 to compare the complete option metadata surface")
 	}
@@ -42,15 +42,15 @@ func TestFrozenKnownLayoutOptionsParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var frozen []oracleOptionMetadata
-	if err := json.Unmarshal(raw, &frozen); err != nil {
-		t.Fatalf("decode frozen option metadata: %v", err)
+	var reference []oracleOptionMetadata
+	if err := json.Unmarshal(raw, &reference); err != nil {
+		t.Fatalf("decode reference option metadata: %v", err)
 	}
 
 	registry := core.NewOptionRegistry()
 	builtins.RegisterOptions(registry)
-	want := make(map[string]oracleOptionMetadata, len(frozen))
-	for _, option := range frozen {
+	want := make(map[string]oracleOptionMetadata, len(reference))
+	for _, option := range reference {
 		want[option.ID] = option
 	}
 	got := make(map[string]*core.OptionData, len(registry.Options()))
@@ -73,14 +73,14 @@ func TestFrozenKnownLayoutOptionsParity(t *testing.T) {
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		expected, inFrozen := want[id]
+		expected, inOracle := want[id]
 		actual, inGo := got[id]
-		if !inFrozen {
-			t.Errorf("Go registry exposes option absent from frozen elkjs: %s", id)
+		if !inOracle {
+			t.Errorf("Go registry exposes option absent from elkjs %s: %s", OracleVersion, id)
 			continue
 		}
 		if !inGo {
-			t.Errorf("Go registry is missing frozen elkjs option: %s", id)
+			t.Errorf("Go registry is missing elkjs %s option: %s", OracleVersion, id)
 			continue
 		}
 		if actual.Group != expected.Group {
@@ -135,7 +135,7 @@ func optionTargets(values []string) (core.Targets, error) {
 		case "LABELS":
 			targets |= core.Labels
 		default:
-			return 0, fmt.Errorf("unknown frozen target %q", value)
+			return 0, fmt.Errorf("unknown reference target %q", value)
 		}
 	}
 	return targets, nil

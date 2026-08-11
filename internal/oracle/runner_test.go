@@ -32,6 +32,10 @@ func TestPinnedReferenceDeterminism(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			input, err = PrepareD2ELK012Input(input)
+			if err != nil {
+				t.Fatal(err)
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			first, err := runner.Layout(ctx, input)

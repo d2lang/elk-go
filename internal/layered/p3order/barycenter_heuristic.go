@@ -9,8 +9,6 @@
 package p3order
 
 import (
-	"sort"
-
 	basegraph "github.com/d2lang/elk-go/internal/graph"
 	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
@@ -54,9 +52,7 @@ func (heuristic *BarycenterHeuristic) MinimizeLayer(
 			return
 		}
 	} else {
-		sort.SliceStable(*layer, func(i, j int) bool {
-			return heuristic.compareBarycenters((*layer)[i], (*layer)[j]) < 0
-		})
+		javacompat.GWTStableSort(*layer, heuristic.compareBarycenters)
 	}
 	heuristic.Resolver.ProcessConstraints(heuristic.Arena, layer)
 }

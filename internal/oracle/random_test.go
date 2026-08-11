@@ -53,7 +53,7 @@ func FuzzReferenceRandomDeterminism(f *testing.F) {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(first, second) {
-			t.Fatalf("elkjs 0.8.2 is not byte-deterministic for seed=%d nodes=%d edges=%d", seed, nodes, edges)
+			t.Fatalf("elkjs %s is not byte-deterministic for seed=%d nodes=%d edges=%d", OracleVersion, seed, nodes, edges)
 		}
 	})
 }

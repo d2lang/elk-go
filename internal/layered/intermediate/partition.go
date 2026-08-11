@@ -22,6 +22,12 @@ const partitionConstraintEdgePriority = 1000
 // partitions before cycle breaking. The elevated direction priority mirrors
 // ELK's safeguard against the cycle breaker reversing the edge again.
 func PreprocessPartitions(arena *layered.LGraphArena, graphID layered.LGraphID) {
+	partitionedNodes := make([]layered.LNodeID, 0)
+	for _, nodeID := range arena.Graph(graphID).LayerlessNodes {
+		if basegraph.Has(&arena.Node(nodeID).Properties, core.PartitioningPartition) {
+			partitionedNodes = append(partitionedNodes, nodeID)
+		}
+	}
 	var reverse []layered.LEdgeID
 	for _, sourceNodeID := range arena.Graph(graphID).LayerlessNodes {
 		sourceNode := arena.Node(sourceNodeID)
@@ -38,7 +44,9 @@ func PreprocessPartitions(arena *layered.LGraphArena, graphID layered.LGraphID) 
 			targetNode := arena.Node(*arena.Port(*edge.Target).Node)
 			targetPartition, targetPartitioned := basegraph.TryGet(
 				&targetNode.Properties, core.PartitioningPartition)
-			if targetPartitioned && sourcePartition > targetPartition {
+			if targetPartitioned && sourcePartition > targetPartition ||
+				!targetPartitioned && reachesLowerPartition(
+					arena, sourceNodeID, sourcePartition, partitionedNodes) {
 				reverse = append(reverse, edgeID)
 			}
 		}
@@ -52,6 +60,43 @@ func PreprocessPartitions(arena *layered.LGraphArena, graphID layered.LGraphID) 
 		}
 		basegraph.Set(&arena.Edge(edgeID).Properties, layered.PriorityDirection, priority)
 	}
+}
+
+// reachesLowerPartition ports ELK 0.12's breadth-first search through nodes
+// without a partition. The source edge is reversed when any reachable
+// partitioned node has a lower partition ID; the remainder of that path is
+// deliberately left to the ordinary cycle-breaking/layering pipeline.
+func reachesLowerPartition(
+	arena *layered.LGraphArena,
+	source layered.LNodeID,
+	sourcePartition int,
+	partitionedNodes []layered.LNodeID,
+) bool {
+	lowerPartitions := make(map[layered.LNodeID]struct{})
+	for _, nodeID := range partitionedNodes {
+		partition := basegraph.Get(&arena.Node(nodeID).Properties, core.PartitioningPartition)
+		if partition < sourcePartition {
+			lowerPartitions[nodeID] = struct{}{}
+		}
+	}
+	queue := []layered.LNodeID{source}
+	visited := map[layered.LNodeID]struct{}{source: {}}
+	for len(queue) != 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if _, found := lowerPartitions[current]; found {
+			return true
+		}
+		for _, edgeID := range arena.NodeOutgoingEdges(current) {
+			target := arena.EdgeTargetNode(edgeID)
+			if _, found := visited[target]; found {
+				continue
+			}
+			visited[target] = struct{}{}
+			queue = append(queue, target)
+		}
+	}
+	return false
 }
 
 // ProcessPartitionsBeforeLayering connects every node in a partition to every

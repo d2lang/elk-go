@@ -7,7 +7,7 @@
 //
 // SPDX-License-Identifier: EPL-2.0
 
-// Package random implements org.eclipse.elk.random from ELK 0.8.1.
+// Package random implements org.eclipse.elk.random from ELK 0.12.0.
 package random
 
 import (
@@ -86,18 +86,27 @@ func randomize(model *graph.Model, parent graph.NodeID, rng *javacompat.Random, 
 		m += len(elkutil.AllOutgoingEdges(model, nodeID))
 		maxWidth = math.Max(maxWidth, node.Shape.Width)
 		maxHeight = math.Max(maxHeight, node.Shape.Height)
-		nodesArea += node.Shape.Width * node.Shape.Height
+		nodeArea := float64(node.Shape.Width * node.Shape.Height)
+		nodesArea += nodeArea
 	}
 	n := len(parentNode.Children)
-	drawArea := nodesArea + 2*spacing*spacing*float64(m)*float64(n)
+	spacingArea := float64(2 * spacing)
+	spacingArea = float64(spacingArea * spacing)
+	spacingArea = float64(spacingArea * float64(m))
+	spacingArea = float64(spacingArea * float64(n))
+	drawArea := nodesArea + spacingArea
 	areaSqrt := math.Sqrt(drawArea)
 	drawWidth := math.Max(areaSqrt*aspectRatio, maxWidth)
 	drawHeight := math.Max(areaSqrt/aspectRatio, maxHeight)
 	for _, nodeID := range parentNode.Children {
 		node := model.Node(nodeID)
-		x := padding.Left + rng.NextDouble()*(drawWidth-node.Shape.Width)
+		// The explicit conversions preserve GWT/JavaScript's intermediate
+		// rounding instead of permitting Go to fuse each product with padding.
+		xOffset := float64(rng.NextDouble() * (drawWidth - node.Shape.Width))
+		x := padding.Left + xOffset
 		// This is padding.getLeft() in the pinned Java source, not getTop().
-		y := padding.Left + rng.NextDouble()*(drawHeight-node.Shape.Height)
+		yOffset := float64(rng.NextDouble() * (drawHeight - node.Shape.Height))
+		y := padding.Left + yOffset
 		node.Shape.SetLocation(x, y)
 	}
 

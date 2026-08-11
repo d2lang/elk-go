@@ -6,7 +6,8 @@
 //
 // SPDX-License-Identifier: EPL-2.0
 
-// Package stress ports ELK 0.8.1's org.eclipse.elk.stress provider.
+// Package stress ports org.eclipse.elk.stress targeting ELK.js 0.12.0 while
+// retaining the historical ELK 0.8.1 source mapping for unchanged routines.
 package stress
 
 import (

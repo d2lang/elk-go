@@ -11,10 +11,10 @@ import (
 	"github.com/d2lang/elk-go/internal/oracle"
 )
 
-// TestFrozenELKJS082InvalidEnumFallback pins the ELK JSON importer's behavior
-// for values that do not exist in ELK 0.8.1. The input option is preserved in
-// the output JSON, but layout uses the property's source-defined default.
-func TestFrozenELKJS082InvalidEnumFallback(t *testing.T) {
+// TestHistoricalInvalidEnumFallbackPreservedBy0120 pins a historical importer
+// fallback that remains observable in official elkjs 0.12.0. The input option
+// is preserved in the output JSON, but layout uses the source-defined default.
+func TestHistoricalInvalidEnumFallbackPreservedBy0120(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -38,7 +38,7 @@ func TestFrozenELKJS082InvalidEnumFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := oracle.CompareJSON([]byte(test.want), got, oracle.DefaultTolerance); err != nil {
+			if err := oracle.CompareJSON([]byte(test.want), got, oracle.ExactTolerance); err != nil {
 				t.Fatalf("%v\nwant: %s\ngot:  %s", err, test.want, got)
 			}
 		})

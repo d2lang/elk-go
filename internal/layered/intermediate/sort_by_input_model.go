@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
 	"github.com/d2lang/elk-go/internal/layered/intermediate/preserveorder"
 )
@@ -26,11 +27,15 @@ func SortByInputModel(arena *layered.LGraphArena, graphID layered.LGraphID) erro
 	ordering := basegraph.Get(&graph.Properties, layered.ConsiderModelOrder)
 	longEdgeOrdering := graphLongEdgeOrdering(graph)
 	for layerIndex, layerID := range graph.Layers {
+		arena.Layer(layerID).ID = layerIndex
 		previousIndex := layerIndex
 		if previousIndex != 0 {
 			previousIndex--
 		}
 		previousLayerID := graph.Layers[previousIndex]
+		nodeComparator := preserveorder.NewNodeComparator(
+			arena, arena.Layer(previousLayerID).Nodes, ordering, longEdgeOrdering, true)
+		insertionSortNodes(arena.Layer(layerID).Nodes, nodeComparator.Compare)
 		for _, nodeID := range arena.Layer(layerID).Nodes {
 			node := arena.Node(nodeID)
 			constraints := basegraph.Get(&node.Properties, layered.PortConstraintsOption)
@@ -42,15 +47,35 @@ func SortByInputModel(arena *layered.LGraphArena, graphID layered.LGraphID) erro
 				return err
 			}
 			comparator := preserveorder.NewPortComparator(
-				arena, arena.Layer(previousLayerID).Nodes, targetOrders)
-			gwtStableSort(node.Ports, comparator.Compare)
+				arena,
+				arena.Layer(previousLayerID).Nodes,
+				ordering,
+				targetOrders,
+				basegraph.Get(&graph.Properties, layered.PortModelOrder),
+			)
+			javacompat.GWTStableSort(node.Ports, comparator.Compare)
 			arena.InvalidatePortSideCache(nodeID)
 		}
-		nodeComparator := preserveorder.NewNodeComparator(
-			arena, arena.Layer(previousLayerID).Nodes, ordering, longEdgeOrdering)
-		gwtStableSort(arena.Layer(layerID).Nodes, nodeComparator.Compare)
+		nodeComparator = preserveorder.NewNodeComparator(
+			arena, arena.Layer(previousLayerID).Nodes, ordering, longEdgeOrdering, false)
+		insertionSortNodes(arena.Layer(layerID).Nodes, nodeComparator.Compare)
 	}
 	return nil
+}
+
+func insertionSortNodes(
+	nodes []layered.LNodeID,
+	compare func(layered.LNodeID, layered.LNodeID) int,
+) {
+	for index := 1; index < len(nodes); index++ {
+		value := nodes[index]
+		position := index
+		for position > 0 && compare(nodes[position-1], value) > 0 {
+			nodes[position] = nodes[position-1]
+			position--
+		}
+		nodes[position] = value
+	}
 }
 
 // LongEdgeTargetNodePreprocessing calculates each outgoing port's ultimate

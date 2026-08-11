@@ -15,7 +15,7 @@ import (
 	"github.com/d2lang/elk-go/internal/core"
 )
 
-type frozenOption struct {
+type compatibilityOption struct {
 	id           string
 	group        string
 	kind         core.OptionKind
@@ -24,15 +24,13 @@ type frozenOption struct {
 	metadataOnly bool
 }
 
-// TestFrozenKnownLayoutOptionsGapParity freezes the metadata returned by
-// elkjs 0.8.2's knownLayoutOptions() for the formerly missing option surface.
-// Enum values come from the matching ELK 0.8.1 generated metadata sources.
-func TestFrozenKnownLayoutOptionsGapParity(t *testing.T) {
+// TestKnownLayoutOptionsGapParity pins the metadata returned by official
+// elkjs 0.12.0's knownLayoutOptions() for the provider-independent option surface.
+// Enum values come from the matching ELK 0.12.0 generated metadata sources.
+func TestKnownLayoutOptionsGapParity(t *testing.T) {
 	parents, nodes, edges, labels := core.Parents, core.Nodes, core.Edges, core.Labels
-	want := []frozenOption{
+	want := []compatibilityOption{
 		{"org.eclipse.elk.commentBox", "", core.BooleanOption, nodes, nil, false},
-		{"org.eclipse.elk.disco.debug.discoGraph", "debug", core.ObjectOption, parents, nil, false},
-		{"org.eclipse.elk.disco.debug.discoPolys", "debug", core.ObjectOption, parents, nil, false},
 		{"org.eclipse.elk.hypernode", "", core.BooleanOption, nodes, nil, false},
 		{"org.eclipse.elk.insideSelfLoops.activate", "insideSelfLoops", core.BooleanOption, nodes, nil, false},
 		{"org.eclipse.elk.insideSelfLoops.yo", "insideSelfLoops", core.BooleanOption, edges, nil, false},
@@ -41,14 +39,14 @@ func TestFrozenKnownLayoutOptionsGapParity(t *testing.T) {
 		{"org.eclipse.elk.layered.compaction.postCompaction.strategy", "compaction.postCompaction", core.EnumOption, parents, []string{"NONE", "LEFT", "RIGHT", "LEFT_RIGHT_CONSTRAINT_LOCKING", "LEFT_RIGHT_CONNECTION_LOCKING", "EDGE_LENGTH"}, false},
 		{"org.eclipse.elk.layered.considerModelOrder.noModelOrder", "considerModelOrder", core.BooleanOption, nodes, nil, false},
 		{"org.eclipse.elk.layered.crossingMinimization.positionChoiceConstraint", "crossingMinimization", core.IntegerOption, nodes, nil, false},
-		{"org.eclipse.elk.layered.edgeRouting.splines.mode", "edgeRouting.splines", core.EnumOption, parents, []string{"SLOPPY", "CONSERVATIVE"}, false},
+		{"org.eclipse.elk.layered.edgeRouting.splines.mode", "edgeRouting.splines", core.EnumOption, parents, []string{"SLOPPY", "CONSERVATIVE", "CONSERVATIVE_SOFT"}, false},
 		{"org.eclipse.elk.layered.edgeRouting.splines.sloppy.layerSpacingFactor", "edgeRouting.splines.sloppy", core.DoubleOption, parents, nil, false},
 		{"org.eclipse.elk.layered.highDegreeNodes.threshold", "highDegreeNodes", core.IntegerOption, parents, nil, false},
 		{"org.eclipse.elk.layered.highDegreeNodes.treatment", "highDegreeNodes", core.BooleanOption, parents, nil, false},
 		{"org.eclipse.elk.layered.highDegreeNodes.treeHeight", "highDegreeNodes", core.IntegerOption, parents, nil, false},
 		{"org.eclipse.elk.layered.layering.layerChoiceConstraint", "layering", core.IntegerOption, nodes, nil, false},
 		{"org.eclipse.elk.layered.layering.nodePromotion.maxIterations", "layering.nodePromotion", core.IntegerOption, parents, nil, false},
-		{"org.eclipse.elk.layered.layering.nodePromotion.strategy", "layering.nodePromotion", core.EnumOption, parents, []string{"NONE", "NIKOLOV", "NIKOLOV_PIXEL", "NIKOLOV_IMPROVED", "NIKOLOV_IMPROVED_PIXEL", "DUMMYNODE_PERCENTAGE", "NODECOUNT_PERCENTAGE", "NO_BOUNDARY"}, false},
+		{"org.eclipse.elk.layered.layering.nodePromotion.strategy", "layering.nodePromotion", core.EnumOption, parents, []string{"NONE", "NIKOLOV", "NIKOLOV_PIXEL", "NIKOLOV_IMPROVED", "NIKOLOV_IMPROVED_PIXEL", "DUMMYNODE_PERCENTAGE", "NODECOUNT_PERCENTAGE", "NO_BOUNDARY", "MODEL_ORDER_LEFT_TO_RIGHT", "MODEL_ORDER_RIGHT_TO_LEFT"}, false},
 		{"org.eclipse.elk.layered.nodePlacement.networkSimplex.nodeFlexibility", "nodePlacement.networkSimplex", core.EnumOption, nodes, []string{"NONE", "PORT_POSITION", "NODE_SIZE_WHERE_SPACE_PERMITS", "NODE_SIZE"}, false},
 		{"org.eclipse.elk.layered.nodePlacement.networkSimplex.nodeFlexibility.default", "nodePlacement.networkSimplex.nodeFlexibility", core.EnumOption, parents, []string{"NONE", "PORT_POSITION", "NODE_SIZE_WHERE_SPACE_PERMITS", "NODE_SIZE"}, false},
 		{"org.eclipse.elk.layered.portSortingStrategy", "", core.EnumOption, parents, []string{"INPUT_ORDER", "PORT_DEGREE"}, false},
@@ -87,8 +85,8 @@ func TestFrozenKnownLayoutOptionsGapParity(t *testing.T) {
 		{"org.eclipse.elk.validateOptions", "", core.BooleanOption, parents, nil, true},
 		{"org.eclipse.elk.zoomToFit", "", core.BooleanOption, parents, nil, true},
 	}
-	if len(want) != 56 {
-		t.Fatalf("frozen option surface has %d entries, want 56", len(want))
+	if len(want) != 54 {
+		t.Fatalf("compatibility option surface has %d entries, want 54", len(want))
 	}
 
 	registry := core.NewOptionRegistry()
@@ -96,7 +94,7 @@ func TestFrozenKnownLayoutOptionsGapParity(t *testing.T) {
 	seen := make(map[string]struct{}, len(want))
 	for _, expected := range want {
 		if _, duplicate := seen[expected.id]; duplicate {
-			t.Fatalf("duplicate frozen option %q", expected.id)
+			t.Fatalf("duplicate compatibility option %q", expected.id)
 		}
 		seen[expected.id] = struct{}{}
 		got := registry.ByID(expected.id)

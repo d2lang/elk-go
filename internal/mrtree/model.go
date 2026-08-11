@@ -14,16 +14,26 @@ import (
 )
 
 // These types retain the shape and incidence semantics of TGraph, TNode, and
-// TEdge. In particular, node positions are centers, while the public ELK graph
-// stores node positions at the upper-left corner.
+// TEdge. During Walker placement node positions are centers. The direction and
+// node-position processors then turn them into the upper-left coordinates used
+// by ELK 0.12's routing and component-packing phases.
 type tGraph struct {
-	nodes       []*tNode
-	edges       []*tEdge
-	padding     geometry.Spacing
-	spacing     float64
-	aspectRatio float64
-	separate    bool
-	searchOrder string
+	nodes                []*tNode
+	edges                []*tEdge
+	padding              geometry.Spacing
+	spacing              float64
+	spacingEdgeNode      float64
+	edgeEndTextureLength float64
+	aspectRatio          float64
+	separate             bool
+	searchOrder          string
+	weighting            string
+	direction            string
+	edgeRoutingMode      string
+	compaction           bool
+	fixedGraphSize       bool
+	graphMin             geometry.Point
+	graphMax             geometry.Point
 }
 
 type tNode struct {
@@ -35,17 +45,22 @@ type tNode struct {
 	outgoing []*tEdge
 	incoming []*tEdge
 
-	root, dummy      bool
-	fan, descendants int
-	leftNeighbor     *tNode
-	rightNeighbor    *tNode
-	leftSibling      *tNode
-	rightSibling     *tNode
-	positionIndex    int
-	prelim, modifier float64
-	levelHeight      float64
-	xCoordinate      int
-	yCoordinate      int
+	root, dummy           bool
+	fan, descendants      int
+	leftNeighbor          *tNode
+	rightNeighbor         *tNode
+	leftSibling           *tNode
+	rightSibling          *tNode
+	positionIndex         int
+	prelim, modifier      float64
+	levelHeight           float64
+	treeLevel             int
+	levelMin              float64
+	levelMax              float64
+	compactConstraints    []*tNode
+	compactLevelAscension bool
+	xCoordinate           int
+	yCoordinate           int
 }
 
 type tEdge struct {

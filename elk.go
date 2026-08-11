@@ -7,7 +7,9 @@
 // SPDX-License-Identifier: EPL-2.0
 
 // Package elk provides a native Go implementation of the Eclipse Layout
-// Kernel JSON layout API used by elkjs.
+// Kernel JSON behavior used by D2, pinned to official ELK.js 0.12.0. It does
+// not promise compatibility with expert option combinations outside D2's
+// documented profile.
 package elk
 
 import "github.com/d2lang/elk-go/graphjson"

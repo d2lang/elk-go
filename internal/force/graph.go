@@ -20,20 +20,20 @@ import (
 // Particle is ELK's FParticle. Position is a center for nodes and the
 // top-left corner for labels, matching the Java implementation.
 type Particle struct {
-	Position geometry.Point
-	Size     geometry.Point
-	Priority int
-	node     *FNode
-	bendEdge *FEdge
+	Position     geometry.Point
+	Size         geometry.Point
+	Displacement geometry.Point
+	Priority     int
+	node         *FNode
+	bendEdge     *FEdge
 }
 
-func (particle *Particle) Radius() float64 { return particle.Size.Length() / 2 }
+func (particle *Particle) Radius() float64 { return forceVectorLength(particle.Size) / 2 }
 
 type FNode struct {
 	Particle
-	ID           int
-	Origin       graph.NodeID
-	Displacement geometry.Point
+	ID     int
+	Origin graph.NodeID
 }
 
 type FLabel struct {
@@ -145,13 +145,16 @@ func (edge *FEdge) DistributeBendpoints() {
 	if count == 0 {
 		return
 	}
-	increment := edge.Target.Position.Sub(edge.Source.Position).Scale(1 / float64(count+1))
+	factor := float64(1 / float64(count+1))
+	difference := edge.Target.Position.Sub(edge.Source.Position)
+	increment := geometry.Point{
+		X: float64(difference.X * factor),
+		Y: float64(difference.Y * factor),
+	}
 	position := edge.Source.Position
 	for _, bendpoint := range edge.Bendpoints {
-		// ELK 0.8.1 assigns before incrementing; preserving this apparent
-		// off-by-one is necessary for force parity.
-		bendpoint.Position = position
 		position = position.Add(increment)
+		bendpoint.Position = position
 	}
 }
 

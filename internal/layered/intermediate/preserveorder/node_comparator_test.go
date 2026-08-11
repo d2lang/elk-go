@@ -21,7 +21,7 @@ func TestNodeComparatorOrdersRealNodesByModel(t *testing.T) {
 	basegraph.Set(&arena.Node(low).Properties, layered.ModelOrder, 1)
 	basegraph.Set(&arena.Node(high).Properties, layered.ModelOrder, 2)
 	order := []layered.LNodeID{high, low}
-	comparator := NewNodeComparator(arena, nil, layered.OrderingNodesAndEdges, DummyNodeOver)
+	comparator := NewNodeComparator(arena, nil, layered.OrderingNodesAndEdges, DummyNodeOver, false)
 	slices.SortStableFunc(order, comparator.Compare)
 	if want := []layered.LNodeID{low, high}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("node order = %v, want %v", order, want)
@@ -41,7 +41,7 @@ func TestNodeComparatorOrdersDummiesByPreviousLayer(t *testing.T) {
 	connectComparatorNodes(arena, sourceA, dummyFromA, 11)
 	order := []layered.LNodeID{dummyFromB, dummyFromA}
 	comparator := NewNodeComparator(
-		arena, []layered.LNodeID{sourceA, sourceB}, layered.OrderingNodesAndEdges, DummyNodeOver)
+		arena, []layered.LNodeID{sourceA, sourceB}, layered.OrderingNodesAndEdges, DummyNodeOver, false)
 	slices.SortStableFunc(order, comparator.Compare)
 	if want := []layered.LNodeID{dummyFromA, dummyFromB}; !reflect.DeepEqual(order, want) {
 		t.Fatalf("dummy order = %v, want %v", order, want)
@@ -55,12 +55,9 @@ func TestNodeComparatorModelOrderTieBuildsAssociation(t *testing.T) {
 	second := arena.AddNode(graphID)
 	basegraph.Set(&arena.Node(first).Properties, layered.ModelOrder, 7)
 	basegraph.Set(&arena.Node(second).Properties, layered.ModelOrder, 7)
-	comparator := NewNodeComparator(arena, nil, layered.OrderingNodesAndEdges, DummyNodeOver)
-	if got := comparator.Compare(first, second); got != 0 {
-		t.Fatalf("first tie comparison = %d, want 0", got)
-	}
+	comparator := NewNodeComparator(arena, nil, layered.OrderingNodesAndEdges, DummyNodeOver, false)
 	if got := comparator.Compare(first, second); got != -1 {
-		t.Fatalf("remembered tie association = %d, want -1", got)
+		t.Fatalf("first tie comparison = %d, want -1", got)
 	}
 	if got := comparator.Compare(second, first); got != 1 {
 		t.Fatalf("reverse remembered association = %d, want 1", got)

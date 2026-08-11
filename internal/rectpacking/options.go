@@ -18,43 +18,56 @@ import (
 
 var (
 	AspectRatio = graph.PropertyWithDefault("org.eclipse.elk.aspectRatio", func() float64 { return 1.3 })
-	ExpandNodes = graph.PropertyWithDefault("org.eclipse.elk.expandNodes", func() bool { return false })
 	Padding     = graph.CloneablePropertyWithDefault("org.eclipse.elk.padding", func() geometry.Spacing {
 		return geometry.UniformSpacing(15)
 	})
-	SpacingNodeNode = graph.PropertyWithDefault("org.eclipse.elk.spacing.nodeNode", func() float64 { return 15 })
-	Interactive     = graph.PropertyWithDefault("org.eclipse.elk.interactive", func() bool { return false })
+	SpacingNodeNode     = graph.PropertyWithDefault("org.eclipse.elk.spacing.nodeNode", func() float64 { return 15 })
+	Interactive         = graph.PropertyWithDefault("org.eclipse.elk.interactive", func() bool { return false })
+	OmitNodeMicroLayout = graph.PropertyWithDefault("org.eclipse.elk.omitNodeMicroLayout", func() bool { return false })
 
-	OptimizationGoal   = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.optimizationGoal", func() string { return "MAX_SCALE_DRIVEN" })
-	LastPlaceShift     = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.lastPlaceShift", func() bool { return true })
-	CurrentPosition    = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.currentPosition", func() int { return -1 })
-	DesiredPosition    = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.desiredPosition", func() int { return -1 })
-	OnlyFirstIteration = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.onlyFirstIteration", func() bool { return false })
-	RowCompaction      = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.rowCompaction", func() bool { return true })
-	ExpandToAspect     = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.expandToAspectRatio", func() bool { return false })
-	TargetWidth        = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.targetWidth", func() float64 { return -1 })
+	OptimizationGoal              = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.widthApproximation.optimizationGoal", func() string { return "MAX_SCALE_DRIVEN" })
+	LastPlaceShift                = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.widthApproximation.lastPlaceShift", func() bool { return true })
+	WidthApproximationStrategy    = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.widthApproximation.strategy", func() string { return "GREEDY" })
+	PackingStrategy               = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.packing.strategy", func() string { return "COMPACTION" })
+	RowHeightReevaluation         = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.packing.compaction.rowHeightReevaluation", func() bool { return false })
+	CompactionIterations          = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.packing.compaction.iterations", func() int { return 1 })
+	WhiteSpaceEliminationStrategy = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.whiteSpaceElimination.strategy", func() string { return "NONE" })
+	CurrentPosition               = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.currentPosition", func() int { return -1 })
+	DesiredPosition               = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.desiredPosition", func() int { return -1 })
+	InNewRow                      = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.inNewRow", func() bool { return false })
+	TryBox                        = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.trybox", func() bool { return false })
+	OrderBySize                   = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.orderBySize", func() bool { return false })
+	TargetWidth                   = graph.PropertyWithDefault("org.eclipse.elk.rectpacking.widthApproximation.targetWidth", func() float64 { return -1 })
 )
 
 // RegisterOptions registers the metadata declared by RectPacking.melk in ELK
-// 0.8.1. Shared core identifiers are deliberately registered idempotently.
+// 0.12.0. Shared core identifiers are deliberately registered idempotently.
 func RegisterOptions(registry *core.OptionRegistry) {
 	if registry == nil {
 		return
 	}
 	options := []core.OptionData{
 		{ID: AspectRatio.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: ExpandNodes.ID, Kind: core.BooleanOption, Targets: core.Parents},
 		{ID: Padding.ID, Kind: core.ObjectOption, Targets: core.Parents, Parse: func(value string) (any, error) { return geometry.ParseSpacing(value) }},
 		{ID: SpacingNodeNode.ID, Kind: core.DoubleOption, Targets: core.Parents},
 		{ID: Interactive.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: OptimizationGoal.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{"MAX_SCALE_DRIVEN", "ASPECT_RATIO_DRIVEN", "AREA_DRIVEN"}},
-		{ID: LastPlaceShift.ID, Kind: core.BooleanOption, Targets: core.Parents},
+		{ID: OmitNodeMicroLayout.ID, Kind: core.BooleanOption, Targets: core.Parents},
+		{ID: OptimizationGoal.ID, Group: "widthApproximation", Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{"MAX_SCALE_DRIVEN", "ASPECT_RATIO_DRIVEN", "AREA_DRIVEN"}},
+		{ID: LastPlaceShift.ID, Group: "widthApproximation", Kind: core.BooleanOption, Targets: core.Parents},
+		{ID: WidthApproximationStrategy.ID, Group: "widthApproximation", Kind: core.EnumOption, Targets: core.Parents,
+			EnumValues: []string{"GREEDY", "TARGET_WIDTH"}},
+		{ID: PackingStrategy.ID, Group: "packing", Kind: core.EnumOption, Targets: core.Parents,
+			EnumValues: []string{"COMPACTION", "SIMPLE", "NONE"}},
+		{ID: RowHeightReevaluation.ID, Group: "packing.compaction", Kind: core.BooleanOption, Targets: core.Parents},
+		{ID: CompactionIterations.ID, Group: "packing.compaction", Kind: core.IntegerOption, Targets: core.Parents},
+		{ID: WhiteSpaceEliminationStrategy.ID, Group: "whiteSpaceElimination", Kind: core.EnumOption, Targets: core.Parents,
+			EnumValues: []string{"EQUAL_BETWEEN_STRUCTURES", "TO_ASPECT_RATIO", "NONE"}},
 		{ID: CurrentPosition.ID, Kind: core.IntegerOption, Targets: core.Nodes},
 		{ID: DesiredPosition.ID, Kind: core.IntegerOption, Targets: core.Nodes},
-		{ID: OnlyFirstIteration.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: RowCompaction.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: ExpandToAspect.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: TargetWidth.ID, Kind: core.DoubleOption, Targets: core.Parents},
+		{ID: InNewRow.ID, Kind: core.BooleanOption, Targets: core.Nodes},
+		{ID: TryBox.ID, Kind: core.BooleanOption, Targets: core.Parents},
+		{ID: OrderBySize.ID, Kind: core.BooleanOption, Targets: core.Parents},
+		{ID: TargetWidth.ID, Group: "widthApproximation", Kind: core.DoubleOption, Targets: core.Parents},
 	}
 	for _, option := range options {
 		if registry.ByID(option.ID) == nil {
