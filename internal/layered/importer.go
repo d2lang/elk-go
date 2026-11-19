@@ -815,13 +815,17 @@ func (importer *ElkGraphImporter) createDefaultPort(
 	nodeID LNodeID,
 	portType PortType,
 ) LPortID {
-	portID := arena.AddPort()
-	arena.SetPortNode(portID, &nodeID)
 	direction := basegraph.Get(&arena.Graph(graphID).Properties, DirectionOption)
 	side := DirectionPortSide(direction)
 	if portType == PortTypeInput {
 		side = side.Opposed()
 	}
+	if basegraph.Get(&arena.Graph(graphID).Properties, MergeEdges) &&
+		!basegraph.Get(&arena.Node(nodeID).Properties, PortConstraintsOption).IsSideFixed() {
+		return arena.ProvideCollectorPort(graphID, nodeID, portType, side)
+	}
+	portID := arena.AddPort()
+	arena.SetPortNode(portID, &nodeID)
 	arena.SetPortSide(portID, side)
 	return portID
 }

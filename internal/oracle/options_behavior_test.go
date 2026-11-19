@@ -28,6 +28,13 @@ func TestCandidateOptionBehaviorParity(t *testing.T) {
 		t.Fatal(err)
 	}
 	fixtures := map[string]string{
+		"merge-edges": `{
+			"id":"root","layoutOptions":{"elk.algorithm":"layered","elk.layered.mergeEdges":true},
+			"children":[{"id":"s","width":80,"height":60},{"id":"a","width":40,"height":30},
+				{"id":"b","width":40,"height":30},{"id":"t","width":80,"height":60}],
+			"edges":[{"id":"sa","sources":["s"],"targets":["a"]},{"id":"sb","sources":["s"],"targets":["b"]},
+				{"id":"at","sources":["a"],"targets":["t"]},{"id":"bt","sources":["b"],"targets":["t"]}]
+		}`,
 		"node-label-placement": `{
 			"id":"root",
 			"layoutOptions":{"elk.algorithm":"layered"},
