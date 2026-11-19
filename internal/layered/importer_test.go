@@ -81,6 +81,38 @@ func TestImporterLeavesImplicitPortPositionsAtOrigin(t *testing.T) {
 	}
 }
 
+func TestImporterMergesImplicitPorts(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		merge       bool
+		constraints PortConstraints
+		shared      bool
+	}{
+		{"disabled", false, PortConstraintsFree, false},
+		{"enabled", true, PortConstraintsFree, true},
+		{"fixed side", true, PortConstraintsFixedSide, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			arena := NewLGraphArena()
+			graph := arena.AddGraph()
+			node := arena.AddNode(graph)
+			basegraph.Set(&arena.Graph(graph).Properties, DirectionOption, DirectionUp)
+			basegraph.Set(&arena.Graph(graph).Properties, MergeEdges, tc.merge)
+			basegraph.Set(&arena.Node(node).Properties, PortConstraintsOption, tc.constraints)
+			importer := &ElkGraphImporter{}
+			out := importer.createDefaultPort(arena, graph, node, PortTypeOutput)
+			in := importer.createDefaultPort(arena, graph, node, PortTypeInput)
+			if out == in || arena.Port(out).Side != NorthSide || arena.Port(in).Side != SouthSide {
+				t.Fatalf("unexpected output/input ports: %v/%v", arena.Port(out), arena.Port(in))
+			}
+			if (out == importer.createDefaultPort(arena, graph, node, PortTypeOutput)) != tc.shared ||
+				(in == importer.createDefaultPort(arena, graph, node, PortTypeInput)) != tc.shared {
+				t.Fatalf("expected shared ports = %v", tc.shared)
+			}
+		})
+	}
+}
+
 func TestImporterPreservesRawNodeSizeBeforeDirectionTransform(t *testing.T) {
 	model := basegraph.NewModel()
 	root := model.Root
