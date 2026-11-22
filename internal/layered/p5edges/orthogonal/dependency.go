@@ -37,7 +37,12 @@ func AddCriticalDependency(source, target *HyperEdgeSegment) *HyperEdgeSegmentDe
 }
 
 func addDependency(kind DependencyType, source, target *HyperEdgeSegment, weight int) *HyperEdgeSegmentDependency {
-	dependency := &HyperEdgeSegmentDependency{Type: kind, Weight: weight}
+	var dependency *HyperEdgeSegmentDependency
+	if source != nil && source.strategy != nil && source.strategy.alloc != nil {
+		dependency = source.strategy.alloc.dependency(kind, weight)
+	} else {
+		dependency = &HyperEdgeSegmentDependency{Type: kind, Weight: weight}
+	}
 	dependency.setSource(source)
 	dependency.setTarget(target)
 	return dependency

@@ -35,7 +35,7 @@ func TestImporterPreservesNodePortEdgeOrderAndTypedOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := arena.Graph(graphID).LayerlessNodes; len(got) != 2 || got[0] != importer.Maps.Nodes[first] || got[1] != importer.Maps.Nodes[second] {
+	if got := arena.Graph(graphID).LayerlessNodes; len(got) != 2 || got[0] != importer.Maps.Nodes.At(first) || got[1] != importer.Maps.Nodes.At(second) {
 		t.Fatalf("layerless nodes = %v", got)
 	}
 	if got := basegraph.Get(&arena.Graph(graphID).Properties, DirectionOption); got != DirectionDown {
@@ -47,10 +47,10 @@ func TestImporterPreservesNodePortEdgeOrderAndTypedOptions(t *testing.T) {
 	if got := basegraph.Get(&arena.Graph(graphID).Properties, SpacingNodeNodeBetweenLayers); got != 70 {
 		t.Fatalf("layer spacing = %v", got)
 	}
-	if got := arena.Port(importer.Maps.Ports[source]).Side; got != SouthSide {
+	if got := arena.Port(importer.Maps.Ports.At(source)).Side; got != SouthSide {
 		t.Fatalf("source side = %v", got)
 	}
-	if got := arena.Edge(importer.Maps.Edges[edge]); *got.Source != importer.Maps.Ports[source] || *got.Target != importer.Maps.Ports[target] {
+	if got := arena.Edge(importer.Maps.Edges.At(edge)); *got.Source != importer.Maps.Ports.At(source) || *got.Target != importer.Maps.Ports.At(target) {
 		t.Fatalf("edge endpoints = %v -> %v", got.Source, got.Target)
 	}
 }
@@ -127,7 +127,7 @@ func TestImporterPreservesRawNodeSizeBeforeDirectionTransform(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := arena.Node(importer.Maps.Nodes[nodeID]).Size; got != (geometry.Point{X: 357, Y: 81}) {
+	if got := arena.Node(importer.Maps.Nodes.At(nodeID)).Size; got != (geometry.Point{X: 357, Y: 81}) {
 		t.Fatalf("imported size = %+v, want raw 357x81 before DOWN transforms", got)
 	}
 	if model.Node(nodeID).Shape.Width != 357 || model.Node(nodeID).Shape.Height != 81 {
@@ -150,7 +150,7 @@ func TestImporterOnlyCopiesExplicitIndividualSpacings(t *testing.T) {
 		t.Fatal(err)
 	}
 	individual, found := basegraph.TryGet(
-		&arena.Node(importer.Maps.Nodes[nodeID]).Properties, SpacingIndividual)
+		&arena.Node(importer.Maps.Nodes.At(nodeID)).Properties, SpacingIndividual)
 	if !found {
 		t.Fatal("explicit individual spacings were not copied")
 	}
@@ -179,17 +179,17 @@ func TestImporterBuildsNestedGraphsForIncludeChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	nested := arena.Node(importer.Maps.Nodes[container]).NestedGraph
-	if nested == nil || *nested != importer.Maps.Graphs[container] {
+	nested := arena.Node(importer.Maps.Nodes.At(container)).NestedGraph
+	if nested == nil || *nested != importer.Maps.Graphs.At(container) {
 		t.Fatalf("nested graph = %v", nested)
 	}
-	if arena.NodeGraph(importer.Maps.Nodes[child]) != *nested {
+	if arena.NodeGraph(importer.Maps.Nodes.At(child)) != *nested {
 		t.Fatal("child was not imported into its container graph")
 	}
-	if arena.Graph(*nested).ParentNode == nil || *arena.Graph(*nested).ParentNode != importer.Maps.Nodes[container] {
+	if arena.Graph(*nested).ParentNode == nil || *arena.Graph(*nested).ParentNode != importer.Maps.Nodes.At(container) {
 		t.Fatal("nested graph parent relation missing")
 	}
-	if _, found := basegraph.TryGet(&arena.Edge(importer.Maps.Edges[edge]).Properties, CoordinateSystemOrigin); !found {
+	if _, found := basegraph.TryGet(&arena.Edge(importer.Maps.Edges.At(edge)).Properties, CoordinateSystemOrigin); !found {
 		t.Fatal("cross-hierarchy edge lacks coordinate-system origin")
 	}
 	_ = graphID
@@ -220,10 +220,10 @@ func TestImporterAssignsHierarchicalEdgeModelOrderBreadthFirst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := basegraph.Get(&arena.Edge(importer.Maps.Edges[shallow]).Properties, ModelOrder); got != 0 {
+	if got := basegraph.Get(&arena.Edge(importer.Maps.Edges.At(shallow)).Properties, ModelOrder); got != 0 {
 		t.Fatalf("shallow edge model order = %d, want 0", got)
 	}
-	if got := basegraph.Get(&arena.Edge(importer.Maps.Edges[deep]).Properties, ModelOrder); got != 1 {
+	if got := basegraph.Get(&arena.Edge(importer.Maps.Edges.At(deep)).Properties, ModelOrder); got != 1 {
 		t.Fatalf("deep edge model order = %d, want 1", got)
 	}
 }
@@ -242,13 +242,13 @@ func TestImporterSkipsModelOrderForOptedOutNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := basegraph.Get(&arena.Node(importer.Maps.Nodes[first]).Properties, ModelOrder); got != 0 {
+	if got := basegraph.Get(&arena.Node(importer.Maps.Nodes.At(first)).Properties, ModelOrder); got != 0 {
 		t.Fatalf("first model order = %d, want 0", got)
 	}
-	if _, found := basegraph.TryGet(&arena.Node(importer.Maps.Nodes[optedOut]).Properties, ModelOrder); found {
+	if _, found := basegraph.TryGet(&arena.Node(importer.Maps.Nodes.At(optedOut)).Properties, ModelOrder); found {
 		t.Fatal("opted-out node received a model order")
 	}
-	if got := basegraph.Get(&arena.Node(importer.Maps.Nodes[last]).Properties, ModelOrder); got != 1 {
+	if got := basegraph.Get(&arena.Node(importer.Maps.Nodes.At(last)).Properties, ModelOrder); got != 1 {
 		t.Fatalf("last model order = %d, want 1", got)
 	}
 }
@@ -268,13 +268,13 @@ func TestImporterAssignsPortModelOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := basegraph.Get(&arena.Port(importer.Maps.Ports[first]).Properties, ModelOrder); got != 0 {
+	if got := basegraph.Get(&arena.Port(importer.Maps.Ports.At(first)).Properties, ModelOrder); got != 0 {
 		t.Fatalf("first port model order = %d, want 0", got)
 	}
-	if _, found := importer.Maps.Ports[skipped]; found {
+	if _, found := importer.Maps.Ports.Get(skipped); found {
 		t.Fatal("no-layout port was imported")
 	}
-	if got := basegraph.Get(&arena.Port(importer.Maps.Ports[last]).Properties, ModelOrder); got != 2 {
+	if got := basegraph.Get(&arena.Port(importer.Maps.Ports.At(last)).Properties, ModelOrder); got != 2 {
 		t.Fatalf("last port model order = %d, want 2 including skipped port", got)
 	}
 }
@@ -295,10 +295,10 @@ func TestImporterUsesImmediateParentModelOrderProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, found := basegraph.TryGet(&arena.Node(importer.Maps.Nodes[child]).Properties, ModelOrder); found {
+	if _, found := basegraph.TryGet(&arena.Node(importer.Maps.Nodes.At(child)).Properties, ModelOrder); found {
 		t.Fatal("nested child inherited the root model-order profile")
 	}
-	if _, found := basegraph.TryGet(&arena.Port(importer.Maps.Ports[childPort]).Properties, ModelOrder); found {
+	if _, found := basegraph.TryGet(&arena.Port(importer.Maps.Ports.At(childPort)).Properties, ModelOrder); found {
 		t.Fatal("nested child port inherited the root model-order profile")
 	}
 }

@@ -9,9 +9,8 @@
 package p4nodes
 
 import (
-	"sort"
-
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
 )
 
@@ -29,24 +28,36 @@ type NeighborhoodInformation struct {
 	NodeIndex      []int
 	LeftNeighbors  [][]Neighbor
 	RightNeighbors [][]Neighbor
+
+	neighborBacking []Neighbor
 }
 
 func BuildNeighborhoodInformation(
 	arena *layered.LGraphArena,
 	graphID layered.LGraphID,
 ) *NeighborhoodInformation {
-	layers := append([]layered.LayerID(nil), arena.Graph(graphID).Layers...)
+	info := &NeighborhoodInformation{}
+	buildNeighborhoodInformation(arena, graphID, info)
+	return info
+}
+
+// buildNeighborhoodInformation fills info, reusing its slices' storage. Every
+// entry of every slice is assigned, so the result equals a fresh one.
+func buildNeighborhoodInformation(
+	arena *layered.LGraphArena,
+	graphID layered.LGraphID,
+	info *NeighborhoodInformation,
+) {
+	layers := arena.Graph(graphID).Layers
 	nodeCount := 0
 	for _, layerID := range layers {
 		nodeCount += len(arena.Layer(layerID).Nodes)
 	}
-	info := &NeighborhoodInformation{
-		NodeCount:      nodeCount,
-		LayerIndex:     make([]int, len(layers)),
-		NodeIndex:      make([]int, nodeCount),
-		LeftNeighbors:  make([][]Neighbor, nodeCount),
-		RightNeighbors: make([][]Neighbor, nodeCount),
-	}
+	info.NodeCount = nodeCount
+	info.LayerIndex = resizeInts(info.LayerIndex, len(layers))
+	info.NodeIndex = resizeInts(info.NodeIndex, nodeCount)
+	info.LeftNeighbors = resizeNeighborLists(info.LeftNeighbors, nodeCount)
+	info.RightNeighbors = resizeNeighborLists(info.RightNeighbors, nodeCount)
 	nodeScratchID := 0
 	for layerIndex, layerID := range layers {
 		arena.Layer(layerID).ID = layerIndex
@@ -57,14 +68,34 @@ func BuildNeighborhoodInformation(
 			nodeScratchID++
 		}
 	}
+	// All neighbor lists are cut from one growing array; each list is final
+	// once cut and has its capacity capped at its length.
+	backing := info.neighborBacking[:0]
 	for _, layerID := range layers {
 		for _, nodeID := range arena.Layer(layerID).Nodes {
 			nodeIndex := arena.Node(nodeID).ID
-			info.LeftNeighbors[nodeIndex] = info.neighbors(arena, nodeID, true)
-			info.RightNeighbors[nodeIndex] = info.neighbors(arena, nodeID, false)
+			var list []Neighbor
+			list, backing = info.neighbors(arena, nodeID, true, backing)
+			info.LeftNeighbors[nodeIndex] = list
+			list, backing = info.neighbors(arena, nodeID, false, backing)
+			info.RightNeighbors[nodeIndex] = list
 		}
 	}
-	return info
+	info.neighborBacking = backing
+}
+
+func resizeInts(values []int, n int) []int {
+	if cap(values) < n {
+		return make([]int, n)
+	}
+	return values[:n]
+}
+
+func resizeNeighborLists(values [][]Neighbor, n int) [][]Neighbor {
+	if cap(values) < n {
+		return make([][]Neighbor, n)
+	}
+	return values[:n]
 }
 
 func (info *NeighborhoodInformation) Cleanup() {
@@ -72,38 +103,46 @@ func (info *NeighborhoodInformation) Cleanup() {
 	info.NodeIndex = nil
 	info.LeftNeighbors = nil
 	info.RightNeighbors = nil
+	info.neighborBacking = nil
 }
 
+// neighbors appends nodeID's neighbor list to backing and returns it (as a
+// capacity-capped slice) together with the grown backing array.
 func (info *NeighborhoodInformation) neighbors(
 	arena *layered.LGraphArena,
 	nodeID layered.LNodeID,
 	left bool,
-) []Neighbor {
-	result := make([]Neighbor, 0)
+	backing []Neighbor,
+) ([]Neighbor, []Neighbor) {
+	start := len(backing)
 	maxPriority := 0
-	edges := arena.NodeOutgoingEdges(nodeID)
-	if left {
-		edges = arena.NodeIncomingEdges(nodeID)
-	}
-	for _, edgeID := range edges {
-		if arena.EdgeIsSelfLoop(edgeID) || arena.EdgeIsInLayer(edgeID) {
-			continue
+	// NodeIncomingEdges / NodeOutgoingEdges order, without the copy.
+	for _, portID := range arena.Node(nodeID).Ports {
+		edges := arena.Port(portID).OutgoingEdges
+		if left {
+			edges = arena.Port(portID).IncomingEdges
 		}
-		priority := basegraph.Get(&arena.Edge(edgeID).Properties, layered.PriorityStraightness)
-		if priority > maxPriority {
-			maxPriority = priority
-			result = result[:0]
-		}
-		if priority == maxPriority {
-			neighbor := arena.EdgeTargetNode(edgeID)
-			if left {
-				neighbor = arena.EdgeSourceNode(edgeID)
+		for _, edgeID := range edges {
+			if arena.EdgeIsSelfLoop(edgeID) || arena.EdgeIsInLayer(edgeID) {
+				continue
 			}
-			result = append(result, Neighbor{Node: neighbor, Edge: edgeID})
+			priority := basegraph.Get(&arena.Edge(edgeID).Properties, layered.PriorityStraightness)
+			if priority > maxPriority {
+				maxPriority = priority
+				backing = backing[:start]
+			}
+			if priority == maxPriority {
+				neighbor := arena.EdgeTargetNode(edgeID)
+				if left {
+					neighbor = arena.EdgeSourceNode(edgeID)
+				}
+				backing = append(backing, Neighbor{Node: neighbor, Edge: edgeID})
+			}
 		}
 	}
-	sort.SliceStable(result, func(i, j int) bool {
-		return info.NodeIndex[arena.Node(result[i].Node).ID] < info.NodeIndex[arena.Node(result[j].Node).ID]
+	result := backing[start:len(backing):len(backing)]
+	javacompat.GoStableSort(result, func(first, second Neighbor) bool {
+		return info.NodeIndex[arena.Node(first.Node).ID] < info.NodeIndex[arena.Node(second.Node).ID]
 	})
-	return result
+	return result, backing
 }

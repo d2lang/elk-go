@@ -233,6 +233,17 @@ func (model *Model) AddSection(edge EdgeID) SectionID {
 	return id
 }
 
+// ReserveSections makes room for n more sections, so that adding them does
+// not reallocate the section arena repeatedly. Only capacity changes.
+func (model *Model) ReserveSections(n int) {
+	if cap(model.Sections)-len(model.Sections) >= n {
+		return
+	}
+	grown := make([]EdgeSection, len(model.Sections), len(model.Sections)+n)
+	copy(grown, model.Sections)
+	model.Sections = grown
+}
+
 func (model *Model) ShapeNode(shape ShapeID) NodeID {
 	if shape.Kind == NodeShape {
 		return shape.Node
@@ -262,19 +273,24 @@ func (model *Model) Properties(element ElementID) *PropertyMap {
 	}
 }
 
+// Descendants lists node's descendants in depth-first pre-order (a node,
+// then its children's subtrees in child order). The pending nodes are kept
+// on a stack in reverse order, so that each step pops the next node from
+// the end instead of rebuilding a queue with its children in front.
 func (model *Model) Descendants(node NodeID) []NodeID {
 	result := make([]NodeID, 0)
-	stack := append([]NodeID(nil), model.Node(node).Children...)
+	children := model.Node(node).Children
+	stack := make([]NodeID, 0, len(children))
+	for index := len(children) - 1; index >= 0; index-- {
+		stack = append(stack, children[index])
+	}
 	for len(stack) > 0 {
-		current := stack[0]
-		stack = stack[1:]
+		current := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
 		result = append(result, current)
 		children := model.Node(current).Children
-		if len(children) > 0 {
-			next := make([]NodeID, 0, len(children)+len(stack))
-			next = append(next, children...)
-			next = append(next, stack...)
-			stack = next
+		for index := len(children) - 1; index >= 0; index-- {
+			stack = append(stack, children[index])
 		}
 	}
 	return result

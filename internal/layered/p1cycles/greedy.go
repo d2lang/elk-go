@@ -37,14 +37,52 @@ func (*GreedyCycleBreaker) ProcessorConfiguration(
 	return layered.GreedyCycleConfiguration()
 }
 
+// greedyScratch is the working storage of GreedyCycleBreaker.Process, kept
+// in the arena (layered.ScratchGreedyCycles); every part is reset or
+// overwritten before it is read.
+type greedyScratch struct {
+	degrees []int
+	sources []layered.LNodeID
+	sinks   []layered.LNodeID
+	maximum []layered.LNodeID
+	ports   []layered.LPortID
+	edges   []layered.LEdgeID
+}
+
 func (breaker *GreedyCycleBreaker) Process(arena *layered.LGraphArena, graphID layered.LGraphID) error {
+	if portless(arena, arena.Graph(graphID).LayerlessNodes) {
+		// Nodes without ports have no edges: the general path numbers the
+		// nodes, finds every node to be a sink, reverses nothing and reads
+		// or writes no property (and draws nothing); only the numbering
+		// remains.
+		for index, nodeID := range arena.Graph(graphID).LayerlessNodes {
+			arena.Node(nodeID).ID = index
+		}
+		return nil
+	}
+	scratch, _ := arena.Scratch(layered.ScratchGreedyCycles).(*greedyScratch)
+	if scratch == nil {
+		scratch = &greedyScratch{}
+		arena.SetScratch(layered.ScratchGreedyCycles, scratch)
+	}
 	nodes := arena.Graph(graphID).LayerlessNodes
 	nodeCount := len(nodes)
-	indegree := make([]int, nodeCount)
-	outdegree := make([]int, nodeCount)
-	mark := make([]int, nodeCount)
-	sources := make([]layered.LNodeID, 0)
-	sinks := make([]layered.LNodeID, 0)
+	// Three zeroed, disjoint arrays from one block (only indexed).
+	degrees := scratch.degrees
+	if cap(degrees) < 3*nodeCount {
+		degrees = make([]int, 3*nodeCount)
+	} else {
+		degrees = degrees[:3*nodeCount]
+		clear(degrees)
+	}
+	scratch.degrees = degrees
+	indegree := degrees[:nodeCount:nodeCount]
+	outdegree := degrees[nodeCount : 2*nodeCount : 2*nodeCount]
+	mark := degrees[2*nodeCount:]
+	// The source and sink queues are walked by head index (the order of
+	// taking the first element each time).
+	sources, sourceHead := scratch.sources[:0], 0
+	sinks, sinkHead := scratch.sinks[:0], 0
 
 	for index, nodeID := range nodes {
 		arena.Node(nodeID).ID = index
@@ -82,29 +120,32 @@ func (breaker *GreedyCycleBreaker) Process(arena *layered.LGraphArena, graphID l
 
 	updateNeighbors := func(nodeID layered.LNodeID) {
 		for _, portID := range arena.Node(nodeID).Ports {
-			for _, edgeID := range arena.PortConnectedEdges(portID) {
-				connectedPort := arena.EdgeOtherPort(edgeID, portID)
-				endpoint := *arena.Port(connectedPort).Node
-				if endpoint == nodeID {
-					continue
-				}
-				priority := basegraph.Get(&arena.Edge(edgeID).Properties, layered.PriorityDirection)
-				if priority < 0 {
-					priority = 0
-				}
-				index := arena.Node(endpoint).ID
-				if mark[index] != 0 {
-					continue
-				}
-				if arena.Edge(edgeID).Target != nil && *arena.Edge(edgeID).Target == connectedPort {
-					indegree[index] -= priority + 1
-					if indegree[index] <= 0 && outdegree[index] > 0 {
-						sources = append(sources, endpoint)
+			// The loop changes no edge list, so the lists are walked in place.
+			for _, edges := range arena.PortEdgeLists(portID) {
+				for _, edgeID := range edges {
+					connectedPort := arena.EdgeOtherPort(edgeID, portID)
+					endpoint := *arena.Port(connectedPort).Node
+					if endpoint == nodeID {
+						continue
 					}
-				} else {
-					outdegree[index] -= priority + 1
-					if outdegree[index] <= 0 && indegree[index] > 0 {
-						sinks = append(sinks, endpoint)
+					priority := basegraph.Get(&arena.Edge(edgeID).Properties, layered.PriorityDirection)
+					if priority < 0 {
+						priority = 0
+					}
+					index := arena.Node(endpoint).ID
+					if mark[index] != 0 {
+						continue
+					}
+					if arena.Edge(edgeID).Target != nil && *arena.Edge(edgeID).Target == connectedPort {
+						indegree[index] -= priority + 1
+						if indegree[index] <= 0 && outdegree[index] > 0 {
+							sources = append(sources, endpoint)
+						}
+					} else {
+						outdegree[index] -= priority + 1
+						if outdegree[index] <= 0 && indegree[index] > 0 {
+							sinks = append(sinks, endpoint)
+						}
 					}
 				}
 			}
@@ -114,9 +155,9 @@ func (breaker *GreedyCycleBreaker) Process(arena *layered.LGraphArena, graphID l
 	unprocessed := nodeCount
 	nextRight, nextLeft := -1, 1
 	for unprocessed > 0 {
-		for len(sinks) > 0 {
-			nodeID := sinks[0]
-			sinks = sinks[1:]
+		for sinkHead < len(sinks) {
+			nodeID := sinks[sinkHead]
+			sinkHead++
 			index := arena.Node(nodeID).ID
 			if mark[index] != 0 {
 				continue
@@ -126,9 +167,9 @@ func (breaker *GreedyCycleBreaker) Process(arena *layered.LGraphArena, graphID l
 			updateNeighbors(nodeID)
 			unprocessed--
 		}
-		for len(sources) > 0 {
-			nodeID := sources[0]
-			sources = sources[1:]
+		for sourceHead < len(sources) {
+			nodeID := sources[sourceHead]
+			sourceHead++
 			index := arena.Node(nodeID).ID
 			if mark[index] != 0 {
 				continue
@@ -143,7 +184,7 @@ func (breaker *GreedyCycleBreaker) Process(arena *layered.LGraphArena, graphID l
 		}
 
 		maximumOutflow := math.MinInt
-		maximumNodes := make([]layered.LNodeID, 0)
+		maximumNodes := scratch.maximum[:0]
 		for _, nodeID := range nodes {
 			index := arena.Node(nodeID).ID
 			if mark[index] != 0 {
@@ -158,7 +199,9 @@ func (breaker *GreedyCycleBreaker) Process(arena *layered.LGraphArena, graphID l
 				maximumNodes = append(maximumNodes, nodeID)
 			}
 		}
+		scratch.maximum = maximumNodes
 		if len(maximumNodes) == 0 {
+			scratch.sources, scratch.sinks = sources[:0], sinks[:0]
 			return fmt.Errorf("layered p1: no unprocessed maximum-outflow node")
 		}
 		chosen := breaker.chooseMaximumNode(arena, graphID, maximumNodes)
@@ -174,9 +217,15 @@ func (breaker *GreedyCycleBreaker) Process(arena *layered.LGraphArena, graphID l
 			mark[index] += shiftBase
 		}
 	}
+	// Reversing edges changes the lists, so each loop walks a snapshot; the
+	// snapshots live in two buffers (the loops are strictly nested and each
+	// buffer is refilled only when its loop starts).
+	portsSnapshot, edgesSnapshot := scratch.ports[:0], scratch.edges[:0]
 	for _, nodeID := range nodes {
-		for _, portID := range append([]layered.LPortID(nil), arena.Node(nodeID).Ports...) {
-			for _, edgeID := range append([]layered.LEdgeID(nil), arena.Port(portID).OutgoingEdges...) {
+		portsSnapshot = append(portsSnapshot[:0], arena.Node(nodeID).Ports...)
+		for _, portID := range portsSnapshot {
+			edgesSnapshot = append(edgesSnapshot[:0], arena.Port(portID).OutgoingEdges...)
+			for _, edgeID := range edgesSnapshot {
 				target := arena.EdgeTargetNode(edgeID)
 				if mark[arena.Node(nodeID).ID] > mark[arena.Node(target).ID] {
 					arena.ReverseEdge(graphID, edgeID, true)
@@ -185,6 +234,8 @@ func (breaker *GreedyCycleBreaker) Process(arena *layered.LGraphArena, graphID l
 			}
 		}
 	}
+	scratch.sources, scratch.sinks = sources[:0], sinks[:0]
+	scratch.ports, scratch.edges = portsSnapshot[:0], edgesSnapshot[:0]
 	return nil
 }
 
@@ -217,4 +268,14 @@ func (breaker *GreedyCycleBreaker) chooseMaximumNode(
 func javacompatRandom(arena *layered.LGraphArena, graphID layered.LGraphID) *javacompat.Random {
 	layered.ConfigureGraphProperties(arena, graphID)
 	return basegraph.Get(&arena.Graph(graphID).Properties, layered.Random)
+}
+
+// portless reports whether none of nodes has a port.
+func portless(arena *layered.LGraphArena, nodes []layered.LNodeID) bool {
+	for _, nodeID := range nodes {
+		if len(arena.Node(nodeID).Ports) != 0 {
+			return false
+		}
+	}
+	return true
 }

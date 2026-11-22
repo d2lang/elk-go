@@ -99,7 +99,7 @@ func (arena *LGraphArena) CreateExternalPortDummy(
 	dummyID := arena.AddNode(graphID)
 	dummy := arena.Node(dummyID)
 	dummy.Type = ExternalPortNode
-	basegraph.Set(&dummy.Properties, ExternalPortSize, portSize)
+	arena.SetPoint(&dummy.Properties, ExternalPortSize, portSize)
 	basegraph.Set(&dummy.Properties, PortConstraintsOption, PortConstraintsFixedPosition)
 	borderOffset := basegraph.Get(propertyHolder, PortBorderOffset)
 	basegraph.Set(&dummy.Properties, PortBorderOffset, borderOffset)

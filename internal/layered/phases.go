@@ -9,7 +9,7 @@
 
 package layered
 
-import "sort"
+import "math/bits"
 
 type Phase uint8
 
@@ -100,9 +100,10 @@ type ConfiguredProcessor interface {
 }
 
 // ProcessorConfiguration has six slots: before each of the five phases and
-// one after edge routing.
+// one after edge routing. Each slot is Java's EnumSet of strategies, kept as
+// a bit set: iterating its bits in ascending order is the EnumSet order.
 type ProcessorConfiguration struct {
-	slots [6][]IntermediateProcessorStrategy
+	slots [6]uint64
 }
 
 func (configuration *ProcessorConfiguration) AddBefore(phase Phase, processor IntermediateProcessorStrategy) *ProcessorConfiguration {
@@ -117,27 +118,30 @@ func (configuration *ProcessorConfiguration) AddAfter(phase Phase, processor Int
 
 func (configuration *ProcessorConfiguration) AddAll(other ProcessorConfiguration) *ProcessorConfiguration {
 	for slot := range other.slots {
-		for _, processor := range other.slots[slot] {
-			configuration.add(slot, processor)
-		}
+		configuration.slots[slot] |= other.slots[slot]
 	}
 	return configuration
 }
 
+// Slot returns the slot's strategies in ascending (EnumSet) order.
 func (configuration *ProcessorConfiguration) Slot(slot int) []IntermediateProcessorStrategy {
-	return append([]IntermediateProcessorStrategy(nil), configuration.slots[slot]...)
+	var result []IntermediateProcessorStrategy
+	for set := configuration.slots[slot]; set != 0; set &= set - 1 {
+		result = append(result, IntermediateProcessorStrategy(bits.TrailingZeros64(set)))
+	}
+	return result
+}
+
+// SlotSet returns the slot as a bit set; bit i is strategy i.
+func (configuration *ProcessorConfiguration) SlotSet(slot int) uint64 {
+	return configuration.slots[slot]
 }
 
 func (configuration *ProcessorConfiguration) add(slot int, processor IntermediateProcessorStrategy) {
-	for _, existing := range configuration.slots[slot] {
-		if existing == processor {
-			return
-		}
+	if processor >= 64 {
+		panic("layered: intermediate processor strategy does not fit the slot bit set")
 	}
-	configuration.slots[slot] = append(configuration.slots[slot], processor)
-	sort.Slice(configuration.slots[slot], func(first, second int) bool {
-		return configuration.slots[slot][first] < configuration.slots[slot][second]
-	})
+	configuration.slots[slot] |= 1 << processor
 }
 
 type PhaseStrategies struct {

@@ -722,8 +722,31 @@ func calculateOutgoingEdgeAngles(model *graph.Model, root graph.NodeID) {
 	}
 }
 
+// routeEdges gives every tree edge below node a straight section, depth
+// first. It is ELK's recursion made iterative, so that deep trees need no
+// deeper call stack (each level of the recursion also held a section
+// composite on its frame, which grew with the property map): frames holds
+// the pending calls. A call walks its node's outgoing edges in order (the
+// list does not change while edges are routed), routing an edge and then
+// making the call for its target, which completes before the next edge is
+// looked at. (A cycle below the root never gets here: wedgeSpace recurses
+// over it without end first, in the original too.)
 func routeEdges(model *graph.Model, node graph.NodeID) {
-	for _, edgeID := range model.Node(node).OutgoingEdges {
+	type frame struct {
+		node graph.NodeID
+		next int
+	}
+	frames := []frame{{node: node}}
+	for len(frames) > 0 {
+		top := &frames[len(frames)-1]
+		node := top.node
+		outgoing := model.Node(node).OutgoingEdges
+		if top.next >= len(outgoing) {
+			frames = frames[:len(frames)-1]
+			continue
+		}
+		edgeID := outgoing[top.next]
+		top.next++
 		edge := model.Edge(edgeID)
 		if len(edge.Sources) == 0 || edge.Sources[0].Kind == graph.PortShape || len(edge.Targets) == 0 {
 			continue
@@ -747,7 +770,7 @@ func routeEdges(model *graph.Model, node graph.NodeID) {
 		section.StartPresent, section.EndPresent = true, true
 		section.BendPoints = nil
 		section.BendPointsPresent = false
-		routeEdges(model, target)
+		frames = append(frames, frame{node: target}) // the call routeEdges(model, target)
 	}
 }
 

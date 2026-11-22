@@ -13,6 +13,7 @@ import (
 	"math"
 
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
 	"github.com/d2lang/elk-go/internal/layered/p5edges/orthogonal"
 )
@@ -81,7 +82,18 @@ func (*OrthogonalEdgeRouter) Process(arena *layered.LGraphArena, graphID layered
 	nodeNodeSpacing := basegraph.Get(&graph.Properties, layered.SpacingNodeNodeBetweenLayers)
 	edgeEdgeSpacing := basegraph.Get(&graph.Properties, layered.SpacingEdgeEdgeBetweenLayers)
 	edgeNodeSpacing := basegraph.Get(&graph.Properties, layered.SpacingEdgeNodeBetweenLayers)
-	generator := orthogonal.NewGenerator(orthogonal.WestToEast, edgeEdgeSpacing)
+	// A graph none of whose ports has an outgoing edge gives every
+	// RouteEdges call no segment: it returns 0 slots, draws nothing and
+	// changes nothing in the arena, except that the first call of a
+	// generator for a graph gives the graph a Random when it has none. That
+	// is all done here instead, without a generator.
+	var generator *orthogonal.Generator
+	if hasOutgoingEdges(arena, graph) {
+		generator = orthogonal.NewGenerator(orthogonal.WestToEast, edgeEdgeSpacing)
+	} else if basegraph.Get(&graph.Properties, layered.Random) == nil {
+		basegraph.Set(&graph.Properties, layered.Random,
+			javacompat.NewRandom(int64(basegraph.Get(&graph.Properties, layered.RandomSeed))))
+	}
 
 	xPosition := 0.0
 	var leftLayer *layered.LayerID
@@ -106,7 +118,10 @@ func (*OrthogonalEdgeRouter) Process(arena *layered.LGraphArena, graphID layered
 		if leftLayer != nil {
 			startPosition += edgeNodeSpacing
 		}
-		slots := generator.RouteEdges(arena, graphID, leftNodes, leftLayerIndex, rightNodes, startPosition)
+		slots := 0
+		if generator != nil {
+			slots = generator.RouteEdges(arena, graphID, leftNodes, leftLayerIndex, rightNodes, startPosition)
+		}
 		leftExternal := allExternalWestOrEastPorts(arena, leftNodes)
 		rightExternal := allExternalWestOrEastPorts(arena, rightNodes)
 		if slots > 0 {
@@ -130,6 +145,12 @@ func (*OrthogonalEdgeRouter) Process(arena *layered.LGraphArena, graphID layered
 		}
 	}
 	graph.Size.X = xPosition
+	if generator != nil {
+		// The generator goes back to the pool only from a call that
+		// returned: one that panics may leave its scratch half-updated, so
+		// it is dropped with the call instead.
+		generator.Release()
+	}
 	return nil
 }
 
@@ -197,4 +218,20 @@ func placeNodesHorizontally(arena *layered.LGraphArena, layerID layered.LayerID,
 		}
 		node.Position.X = xOffset + xPosition
 	}
+}
+
+// hasOutgoingEdges reports whether a port of a node in one of the graph's
+// layers has an outgoing edge (RouteEdges makes segments only for such
+// ports).
+func hasOutgoingEdges(arena *layered.LGraphArena, graph *layered.LGraph) bool {
+	for _, layerID := range graph.Layers {
+		for _, nodeID := range arena.Layer(layerID).Nodes {
+			for _, portID := range arena.Node(nodeID).Ports {
+				if len(arena.Port(portID).OutgoingEdges) != 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

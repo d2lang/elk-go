@@ -32,6 +32,28 @@ type NetworkSimplex struct {
 	lowestPostOrderID []int
 	cutvalue          []float64
 	subtreeStack      []subtreeEntry
+
+	// Buffers of topologicalLayering, calculateCutvalues and normalize,
+	// emptied or zeroed when used.
+	incident []int
+	queue    []NodeID
+	leaves   []NodeID
+	filling  []int
+
+	// The pending calls of tightTreeDFS and postorderTraversal (emptied
+	// when used).
+	walk []walkFrame
+}
+
+// walkFrame is one pending call of the tree walks: the node, the connected
+// edge list being walked (0: incoming, 1: outgoing), the next edge's index in
+// it, and the call's running result (tightTreeDFS's node count,
+// postorderTraversal's lowest post-order ID).
+type walkFrame struct {
+	node   NodeID
+	list   int32
+	edge   int32
+	result int
 }
 
 type subtreeEntry struct {
@@ -49,8 +71,30 @@ func (simplex *NetworkSimplex) WithBalancing(balance bool) *NetworkSimplex {
 }
 
 func (simplex *NetworkSimplex) WithPreviousLayering(nodeCounts []int) *NetworkSimplex {
-	simplex.previousLayeringNodeCounts = append([]int(nil), nodeCounts...)
+	simplex.previousLayeringNodeCounts = append(simplex.previousLayeringNodeCounts[:0], nodeCounts...)
 	return simplex
+}
+
+// resetFor puts simplex in ForGraph(graph)'s state, keeping its buffers.
+func (simplex *NetworkSimplex) resetFor(graph *Graph) {
+	*simplex = NetworkSimplex{
+		graph:                      graph,
+		iterationLimit:             math.MaxInt,
+		previousLayeringNodeCounts: simplex.previousLayeringNodeCounts[:0],
+		edges:                      simplex.edges[:0],
+		treeEdges:                  simplex.treeEdges[:0],
+		sources:                    simplex.sources[:0],
+		edgeVisited:                simplex.edgeVisited[:0],
+		postOrderID:                simplex.postOrderID[:0],
+		lowestPostOrderID:          simplex.lowestPostOrderID[:0],
+		cutvalue:                   simplex.cutvalue[:0],
+		subtreeStack:               simplex.subtreeStack[:0],
+		incident:                   simplex.incident[:0],
+		queue:                      simplex.queue[:0],
+		leaves:                     simplex.leaves[:0],
+		filling:                    simplex.filling[:0],
+		walk:                       simplex.walk[:0],
+	}
 }
 
 func (simplex *NetworkSimplex) WithIterationLimit(limit int) *NetworkSimplex {
@@ -63,7 +107,7 @@ func (simplex *NetworkSimplex) Execute() {
 	if len(simplex.graph.Nodes) == 0 {
 		return
 	}
-	for _, node := range append([]NodeID(nil), simplex.graph.Nodes...) {
+	for _, node := range simplex.graph.Nodes {
 		simplex.graph.Node(node).Layer = 0
 	}
 	removeSubtrees := len(simplex.graph.Nodes) >= removeSubtreesThreshold
@@ -92,15 +136,15 @@ func (simplex *NetworkSimplex) Execute() {
 
 func (simplex *NetworkSimplex) initialize() {
 	nodeCount := len(simplex.graph.Nodes)
-	for _, node := range append([]NodeID(nil), simplex.graph.Nodes...) {
+	for _, node := range simplex.graph.Nodes {
 		simplex.graph.Node(node).treeNode = false
 	}
-	simplex.postOrderID = make([]int, nodeCount)
-	simplex.lowestPostOrderID = make([]int, nodeCount)
+	simplex.postOrderID = zeroedInts(simplex.postOrderID, nodeCount)
+	simplex.lowestPostOrderID = zeroedInts(simplex.lowestPostOrderID, nodeCount)
 	simplex.sources = simplex.sources[:0]
 
-	edges := make([]EdgeID, 0)
-	for index, node := range append([]NodeID(nil), simplex.graph.Nodes...) {
+	edges := simplex.edges[:0]
+	for index, node := range simplex.graph.Nodes {
 		simplex.graph.Node(node).internalID = index
 		if len(simplex.graph.Node(node).IncomingEdges) == 0 {
 			simplex.sources = append(simplex.sources, node)
@@ -111,29 +155,66 @@ func (simplex *NetworkSimplex) initialize() {
 		simplex.graph.Edge(edge).internalID = index
 		simplex.graph.Edge(edge).treeEdge = false
 	}
-	simplex.cutvalue = make([]float64, len(edges))
-	simplex.edgeVisited = make([]bool, len(edges))
+	simplex.cutvalue = zeroedFloats(simplex.cutvalue, len(edges))
+	simplex.edgeVisited = zeroedBools(simplex.edgeVisited, len(edges))
 	simplex.edges = edges
-	simplex.treeEdges = make([]EdgeID, 0, len(edges))
+	simplex.treeEdges = simplex.treeEdges[:0]
 	simplex.postOrder = 1
+}
+
+// zeroedInts, zeroedFloats and zeroedBools return a zeroed slice of length
+// n, reusing the buffer's storage when it is large enough. A negative n
+// panics as the original's make did ("makeslice: len out of range"): normalize
+// passes highest-lowest+1, which overflows for layers that huge node or port
+// sizes produce under NETWORK_SIMPLEX node placement.
+func zeroedInts(buffer []int, n int) []int {
+	if n < 0 || cap(buffer) < n {
+		return make([]int, n)
+	}
+	buffer = buffer[:n]
+	for index := range buffer {
+		buffer[index] = 0
+	}
+	return buffer
+}
+
+func zeroedFloats(buffer []float64, n int) []float64 {
+	if n < 0 || cap(buffer) < n {
+		return make([]float64, n)
+	}
+	buffer = buffer[:n]
+	for index := range buffer {
+		buffer[index] = 0
+	}
+	return buffer
+}
+
+func zeroedBools(buffer []bool, n int) []bool {
+	if n < 0 || cap(buffer) < n {
+		return make([]bool, n)
+	}
+	buffer = buffer[:n]
+	for index := range buffer {
+		buffer[index] = false
+	}
+	return buffer
 }
 
 func (simplex *NetworkSimplex) removeSubtrees() {
 	simplex.subtreeStack = simplex.subtreeStack[:0]
 	queue := make([]NodeID, 0)
 	for _, node := range simplex.graph.Nodes {
-		if len(simplex.graph.Node(node).ConnectedEdges()) == 1 {
+		if simplex.graph.Node(node).connectedCount() == 1 {
 			queue = append(queue, node)
 		}
 	}
 	for len(queue) > 0 {
 		node := queue[0]
 		queue = queue[1:]
-		connected := simplex.graph.Node(node).ConnectedEdges()
-		if len(connected) == 0 {
+		if simplex.graph.Node(node).connectedCount() == 0 {
 			continue
 		}
-		edge := connected[0]
+		edge := simplex.graph.Node(node).firstConnected()
 		isOutgoing := len(simplex.graph.Node(node).OutgoingEdges) != 0
 		other := simplex.graph.Edge(edge).Other(node)
 		if isOutgoing {
@@ -141,7 +222,7 @@ func (simplex *NetworkSimplex) removeSubtrees() {
 		} else {
 			simplex.graph.Node(other).OutgoingEdges = removeFirst(simplex.graph.Node(other).OutgoingEdges, edge)
 		}
-		if len(simplex.graph.Node(other).ConnectedEdges()) == 1 {
+		if simplex.graph.Node(other).connectedCount() == 1 {
 			queue = append(queue, other)
 		}
 		simplex.subtreeStack = append(simplex.subtreeStack, subtreeEntry{node: node, edge: edge})
@@ -182,7 +263,7 @@ func (simplex *NetworkSimplex) feasibleTree() {
 		if simplex.graph.Node(edge.Target).treeNode {
 			slack = -slack
 		}
-		for _, node := range append([]NodeID(nil), simplex.graph.Nodes...) {
+		for _, node := range simplex.graph.Nodes {
 			if simplex.graph.Node(node).treeNode {
 				simplex.graph.Node(node).Layer += slack
 			}
@@ -195,15 +276,16 @@ func (simplex *NetworkSimplex) feasibleTree() {
 }
 
 func (simplex *NetworkSimplex) topologicalLayering() {
-	incident := make([]int, len(simplex.graph.Nodes))
+	incident := zeroedInts(simplex.incident, len(simplex.graph.Nodes))
+	simplex.incident = incident
 	for _, node := range simplex.graph.Nodes {
 		incident[simplex.graph.Node(node).internalID] += len(simplex.graph.Node(node).IncomingEdges)
 	}
-	queue := append([]NodeID(nil), simplex.sources...)
-	for len(queue) > 0 {
-		node := queue[0]
-		queue = queue[1:]
-		for _, edgeID := range append([]EdgeID(nil), simplex.graph.Node(node).OutgoingEdges...) {
+	// A FIFO walked by head index (the order of taking the first element).
+	queue := append(simplex.queue[:0], simplex.sources...)
+	for head := 0; head < len(queue); head++ {
+		node := queue[head]
+		for _, edgeID := range simplex.graph.Node(node).OutgoingEdges {
 			edge := simplex.graph.Edge(edgeID)
 			target := edge.Target
 			newLayer := simplex.graph.Node(node).Layer + edge.Delta
@@ -215,17 +297,20 @@ func (simplex *NetworkSimplex) topologicalLayering() {
 			}
 		}
 	}
+	simplex.queue = queue[:0]
 }
 
 func (simplex *NetworkSimplex) minimalSpan(node NodeID) (int, int) {
 	minOutgoing, minIncoming := math.MaxInt, math.MaxInt
-	for _, edgeID := range simplex.graph.Node(node).ConnectedEdges() {
-		edge := simplex.graph.Edge(edgeID)
-		span := simplex.graph.Node(edge.Target).Layer - simplex.graph.Node(edge.Source).Layer
-		if edge.Target == node && span < minIncoming {
-			minIncoming = span
-		} else if span < minOutgoing {
-			minOutgoing = span
+	for _, edges := range simplex.graph.Node(node).connectedLists() {
+		for _, edgeID := range edges {
+			edge := simplex.graph.Edge(edgeID)
+			span := simplex.graph.Node(edge.Target).Layer - simplex.graph.Node(edge.Source).Layer
+			if edge.Target == node && span < minIncoming {
+				minIncoming = span
+			} else if span < minOutgoing {
+				minOutgoing = span
+			}
 		}
 	}
 	if minIncoming == math.MaxInt {
@@ -237,29 +322,54 @@ func (simplex *NetworkSimplex) minimalSpan(node NodeID) (int, int) {
 	return minIncoming, minOutgoing
 }
 
+// tightTreeDFS is ELK's recursive tightTreeDFS(node) made iterative, so that
+// long chains need no deeper call stack: simplex.walk holds a frame per
+// pending call. Every read and write happens in the recursion's order (a
+// call marks its node, then walks its incoming and then outgoing edges in
+// order, a call made for an edge completing, and adding its count, before
+// the next edge is looked at); the edge lists are read again at each step
+// instead of being kept, as the walk changes no edge list.
 func (simplex *NetworkSimplex) tightTreeDFS(node NodeID) int {
-	nodeCount := 1
 	simplex.graph.Node(node).treeNode = true
-	for _, edgeID := range simplex.graph.Node(node).ConnectedEdges() {
+	walk := append(simplex.walk[:0], walkFrame{node: node, result: 1})
+	for {
+		frame := &walk[len(walk)-1]
+		edges := simplex.graph.Node(frame.node).connectedLists()[frame.list]
+		if int(frame.edge) >= len(edges) {
+			if frame.list == 0 {
+				frame.list, frame.edge = 1, 0
+				continue
+			}
+			count := frame.result
+			walk = walk[:len(walk)-1]
+			if len(walk) == 0 {
+				simplex.walk = walk
+				return count
+			}
+			walk[len(walk)-1].result += count
+			continue
+		}
+		edgeID := edges[frame.edge]
+		frame.edge++
 		internalID := simplex.graph.Edge(edgeID).internalID
 		if simplex.edgeVisited[internalID] {
 			continue
 		}
 		simplex.edgeVisited[internalID] = true
-		opposite := simplex.graph.Edge(edgeID).Other(node)
-		if simplex.graph.Edge(edgeID).treeEdge {
-			nodeCount += simplex.tightTreeDFS(opposite)
-			continue
-		}
-		edge := simplex.graph.Edge(edgeID)
-		tight := edge.Delta == simplex.graph.Node(edge.Target).Layer-simplex.graph.Node(edge.Source).Layer
-		if !simplex.graph.Node(opposite).treeNode && tight {
+		opposite := simplex.graph.Edge(edgeID).Other(frame.node)
+		if !simplex.graph.Edge(edgeID).treeEdge {
+			edge := simplex.graph.Edge(edgeID)
+			tight := edge.Delta == simplex.graph.Node(edge.Target).Layer-simplex.graph.Node(edge.Source).Layer
+			if simplex.graph.Node(opposite).treeNode || !tight {
+				continue
+			}
 			simplex.graph.Edge(edgeID).treeEdge = true
 			simplex.treeEdges = append(simplex.treeEdges, edgeID)
-			nodeCount += simplex.tightTreeDFS(opposite)
 		}
+		// The call tightTreeDFS(opposite).
+		simplex.graph.Node(opposite).treeNode = true
+		walk = append(walk, walkFrame{node: opposite, result: 1})
 	}
-	return nodeCount
 }
 
 func (simplex *NetworkSimplex) minimalSlack() (EdgeID, bool) {
@@ -279,20 +389,54 @@ func (simplex *NetworkSimplex) minimalSlack() (EdgeID, bool) {
 	return result, found
 }
 
+// postorderTraversal is ELK's recursive postorderTraversal(node) made
+// iterative (see tightTreeDFS): a call walks its node's incoming and then
+// outgoing tree edges not visited yet, in order, each call made for one
+// completing before the next edge is looked at, and then numbers its node.
 func (simplex *NetworkSimplex) postorderTraversal(node NodeID) int {
-	lowest := math.MaxInt
-	for _, edgeID := range simplex.graph.Node(node).ConnectedEdges() {
-		internalID := simplex.graph.Edge(edgeID).internalID
-		if simplex.graph.Edge(edgeID).treeEdge && !simplex.edgeVisited[internalID] {
-			simplex.edgeVisited[internalID] = true
-			lowest = min(lowest, simplex.postorderTraversal(simplex.graph.Edge(edgeID).Other(node)))
+	walk := append(simplex.walk[:0], walkFrame{node: node, result: math.MaxInt})
+	for {
+		frame := &walk[len(walk)-1]
+		edges := simplex.graph.Node(frame.node).connectedLists()[frame.list]
+		// The edges a frame skips (not in the tree, or visited) are passed
+		// here without going back to the outer loop; no list changes during
+		// the walk, so reading it once per resumption is reading it per edge.
+		for int(frame.edge) < len(edges) {
+			edge := simplex.graph.Edge(edges[frame.edge])
+			if edge.treeEdge && !simplex.edgeVisited[edge.internalID] {
+				break
+			}
+			frame.edge++
 		}
+		if int(frame.edge) >= len(edges) {
+			if frame.list == 0 {
+				frame.list, frame.edge = 1, 0
+				continue
+			}
+			nodeIndex := simplex.graph.Node(frame.node).internalID
+			simplex.postOrderID[nodeIndex] = simplex.postOrder
+			simplex.lowestPostOrderID[nodeIndex] = min(frame.result, simplex.postOrder)
+			simplex.postOrder++
+			lowest := simplex.lowestPostOrderID[nodeIndex]
+			walk = walk[:len(walk)-1]
+			if len(walk) == 0 {
+				simplex.walk = walk
+				return lowest
+			}
+			parent := &walk[len(walk)-1]
+			parent.result = min(parent.result, lowest)
+			continue
+		}
+		edgeID := edges[frame.edge]
+		frame.edge++
+		internalID := simplex.graph.Edge(edgeID).internalID
+		if !simplex.graph.Edge(edgeID).treeEdge || simplex.edgeVisited[internalID] {
+			continue
+		}
+		simplex.edgeVisited[internalID] = true
+		// The call postorderTraversal(other end).
+		walk = append(walk, walkFrame{node: simplex.graph.Edge(edgeID).Other(frame.node), result: math.MaxInt})
 	}
-	nodeIndex := simplex.graph.Node(node).internalID
-	simplex.postOrderID[nodeIndex] = simplex.postOrder
-	simplex.lowestPostOrderID[nodeIndex] = min(lowest, simplex.postOrder)
-	simplex.postOrder++
-	return simplex.lowestPostOrderID[nodeIndex]
 }
 
 func (simplex *NetworkSimplex) isInHead(node NodeID, edgeID EdgeID) bool {
@@ -310,12 +454,14 @@ func (simplex *NetworkSimplex) isInHead(node NodeID, edgeID EdgeID) bool {
 }
 
 func (simplex *NetworkSimplex) calculateCutvalues() {
-	leaves := make([]NodeID, 0)
-	for _, node := range append([]NodeID(nil), simplex.graph.Nodes...) {
+	leaves := simplex.leaves[:0]
+	for _, node := range simplex.graph.Nodes {
 		simplex.graph.Node(node).unknownCutvalues = simplex.graph.Node(node).unknownCutvalues[:0]
-		for _, edgeID := range simplex.graph.Node(node).ConnectedEdges() {
-			if simplex.graph.Edge(edgeID).treeEdge {
-				simplex.graph.Node(node).unknownCutvalues = append(simplex.graph.Node(node).unknownCutvalues, edgeID)
+		for _, edges := range simplex.graph.Node(node).connectedLists() {
+			for _, edgeID := range edges {
+				if simplex.graph.Edge(edgeID).treeEdge {
+					simplex.graph.Node(node).unknownCutvalues = append(simplex.graph.Node(node).unknownCutvalues, edgeID)
+				}
 			}
 		}
 		if len(simplex.graph.Node(node).unknownCutvalues) == 1 {
@@ -330,27 +476,29 @@ func (simplex *NetworkSimplex) calculateCutvalues() {
 			index := determined.internalID
 			simplex.cutvalue[index] = determined.Weight
 			source, target := determined.Source, determined.Target
-			for _, edgeID := range simplex.graph.Node(node).ConnectedEdges() {
-				if edgeID == toDetermine {
-					continue
-				}
-				edge := simplex.graph.Edge(edgeID)
-				if edge.treeEdge {
-					if source == edge.Source || target == edge.Target {
-						simplex.cutvalue[index] -= simplex.cutvalue[edge.internalID] - edge.Weight
-					} else {
-						simplex.cutvalue[index] += simplex.cutvalue[edge.internalID] - edge.Weight
+			for _, edges := range simplex.graph.Node(node).connectedLists() {
+				for _, edgeID := range edges {
+					if edgeID == toDetermine {
+						continue
 					}
-				} else if node == source {
-					if edge.Source == node {
-						simplex.cutvalue[index] += edge.Weight
-					} else {
+					edge := simplex.graph.Edge(edgeID)
+					if edge.treeEdge {
+						if source == edge.Source || target == edge.Target {
+							simplex.cutvalue[index] -= simplex.cutvalue[edge.internalID] - edge.Weight
+						} else {
+							simplex.cutvalue[index] += simplex.cutvalue[edge.internalID] - edge.Weight
+						}
+					} else if node == source {
+						if edge.Source == node {
+							simplex.cutvalue[index] += edge.Weight
+						} else {
+							simplex.cutvalue[index] -= edge.Weight
+						}
+					} else if edge.Source == node {
 						simplex.cutvalue[index] -= edge.Weight
+					} else {
+						simplex.cutvalue[index] += edge.Weight
 					}
-				} else if edge.Source == node {
-					simplex.cutvalue[index] -= edge.Weight
-				} else {
-					simplex.cutvalue[index] += edge.Weight
 				}
 			}
 			simplex.graph.Node(source).unknownCutvalues = removeFirst(simplex.graph.Node(source).unknownCutvalues, toDetermine)
@@ -362,6 +510,7 @@ func (simplex *NetworkSimplex) calculateCutvalues() {
 			}
 		}
 	}
+	simplex.leaves = leaves[:0]
 }
 
 func (simplex *NetworkSimplex) leaveEdge() (EdgeID, bool) {
@@ -409,7 +558,7 @@ func (simplex *NetworkSimplex) exchange(leave, enter EdgeID) {
 	if !simplex.isInHead(edge.Target, leave) {
 		delta = -delta
 	}
-	for _, node := range append([]NodeID(nil), simplex.graph.Nodes...) {
+	for _, node := range simplex.graph.Nodes {
 		if !simplex.isInHead(node, leave) {
 			simplex.graph.Node(node).Layer += delta
 		}
@@ -426,8 +575,9 @@ func (simplex *NetworkSimplex) normalize() []int {
 		lowest = min(lowest, simplex.graph.Node(node).Layer)
 		highest = max(highest, simplex.graph.Node(node).Layer)
 	}
-	filling := make([]int, highest-lowest+1)
-	for _, node := range append([]NodeID(nil), simplex.graph.Nodes...) {
+	filling := zeroedInts(simplex.filling, highest-lowest+1)
+	simplex.filling = filling
+	for _, node := range simplex.graph.Nodes {
 		simplex.graph.Node(node).Layer -= lowest
 		filling[simplex.graph.Node(node).Layer]++
 	}
@@ -441,7 +591,7 @@ func (simplex *NetworkSimplex) normalize() []int {
 }
 
 func (simplex *NetworkSimplex) balanceLayers(filling []int) {
-	for _, node := range append([]NodeID(nil), simplex.graph.Nodes...) {
+	for _, node := range simplex.graph.Nodes {
 		n := simplex.graph.Node(node)
 		if len(n.IncomingEdges) != len(n.OutgoingEdges) {
 			continue

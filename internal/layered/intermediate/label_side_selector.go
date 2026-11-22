@@ -255,20 +255,23 @@ func gatherPortEndLabels(arena *layered.LGraphArena, portID layered.LPortID) ([]
 
 func gatherPortLabelsDirect(arena *layered.LGraphArena, portID layered.LPortID, labels *[]layered.LLabelID) float64 {
 	maximum := -1.0
-	for _, edgeID := range arena.PortConnectedEdges(portID) {
-		edge := arena.Edge(edgeID)
-		maximum = math.Max(maximum, basegraph.Get(&edge.Properties, layered.EdgeThickness))
-		wanted := layered.EdgeLabelPlacementHead
-		if edge.Source != nil && *edge.Source == portID {
-			wanted = layered.EdgeLabelPlacementTail
-		}
-		for _, labelID := range edge.Labels {
-			if basegraph.Get(&arena.Label(labelID).Properties, layered.EdgeLabelsPlacement) != wanted {
-				continue
+	// Only labels change below, so the edge lists are walked in place.
+	for _, edges := range arena.PortEdgeLists(portID) {
+		for _, edgeID := range edges {
+			edge := arena.Edge(edgeID)
+			maximum = math.Max(maximum, basegraph.Get(&edge.Properties, layered.EdgeThickness))
+			wanted := layered.EdgeLabelPlacementHead
+			if edge.Source != nil && *edge.Source == portID {
+				wanted = layered.EdgeLabelPlacementTail
 			}
-			*labels = append(*labels, labelID)
-			if !basegraph.Has(&arena.Label(labelID).Properties, layered.EndLabelEdge) {
-				basegraph.Set(&arena.Label(labelID).Properties, layered.EndLabelEdge, edgeID)
+			for _, labelID := range edge.Labels {
+				if basegraph.Get(&arena.Label(labelID).Properties, layered.EdgeLabelsPlacement) != wanted {
+					continue
+				}
+				*labels = append(*labels, labelID)
+				if !basegraph.Has(&arena.Label(labelID).Properties, layered.EndLabelEdge) {
+					basegraph.Set(&arena.Label(labelID).Properties, layered.EndLabelEdge, edgeID)
+				}
 			}
 		}
 	}

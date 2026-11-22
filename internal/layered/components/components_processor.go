@@ -55,6 +55,9 @@ func (processor *ComponentsProcessor) Split(
 			continue
 		}
 		componentID := arena.AddGraph()
+		// AddGraph may move the graph arena: re-fetch the split graph (the
+		// loop never writes it, so the values are the ones read before).
+		graph = arena.Graph(graphID)
 		component := arena.Graph(componentID)
 		component.Properties = graph.Properties.Clone()
 		basegraph.Set(&component.Properties, layered.ExternalPortConnections,

@@ -92,8 +92,33 @@ func (*InteractiveLayerer) Process(arena *layered.LGraphArena, graphID layered.L
 		}
 	}
 
-	var checkNode func(layered.LNodeID)
-	checkNode = func(nodeID layered.LNodeID) {
+	// ELK's recursive checkNode(node), made iterative so that long paths need
+	// no deeper call stack: frames holds one frame per pending call. Every
+	// read and write happens in the recursion's order: a call marks its node
+	// and reads its layer's index, then walks its outgoing edges (the list
+	// taken when the call starts); a target not in a later layer is moved to
+	// the next layer (added if missing) and checked, that call completing
+	// before the next edge is looked at.
+	type checkFrame struct {
+		node       layered.LNodeID
+		layerIndex int
+		edges      []layered.LEdgeID
+		next       int
+	}
+	// nextLayer is the layer after layerIndex, added when missing.
+	nextLayer := func(layerIndex int) layered.LayerID {
+		newIndex := layerIndex + 1
+		if newIndex == len(graph.Layers) {
+			newLayer := arena.AddLayer(graphID)
+			arena.Layer(newLayer).ID = newIndex
+			graph.Layers = append(graph.Layers, newLayer)
+			return newLayer
+		}
+		return graph.Layers[newIndex]
+	}
+	// checkRecursive is ELK's checkNode, for calls beyond maxIterativeDepth.
+	var checkRecursive func(layered.LNodeID)
+	checkRecursive = func(nodeID layered.LNodeID) {
 		node := arena.Node(nodeID)
 		node.ID = 1
 		layerIndex := arena.Layer(*node.Layer).ID
@@ -102,19 +127,43 @@ func (*InteractiveLayerer) Process(arena *layered.LGraphArena, graphID layered.L
 			if target == nodeID {
 				continue
 			}
-			targetLayer := arena.Layer(*arena.Node(target).Layer)
-			if targetLayer.ID <= layerIndex {
-				newIndex := layerIndex + 1
-				var newLayer layered.LayerID
-				if newIndex == len(graph.Layers) {
-					newLayer = arena.AddLayer(graphID)
-					arena.Layer(newLayer).ID = newIndex
-					graph.Layers = append(graph.Layers, newLayer)
-				} else {
-					newLayer = graph.Layers[newIndex]
-				}
+			if arena.Layer(*arena.Node(target).Layer).ID <= layerIndex {
+				newLayer := nextLayer(layerIndex)
 				arena.SetNodeLayer(target, &newLayer)
-				checkNode(target)
+				checkRecursive(target)
+			}
+		}
+	}
+	var frames []checkFrame
+	call := func(nodeID layered.LNodeID) {
+		node := arena.Node(nodeID)
+		node.ID = 1
+		layerIndex := arena.Layer(*node.Layer).ID
+		frames = append(frames, checkFrame{node: nodeID, layerIndex: layerIndex, edges: arena.NodeOutgoingEdges(nodeID)})
+	}
+	checkNode := func(start layered.LNodeID) {
+		frames = frames[:0]
+		call(start)
+		for len(frames) > 0 {
+			frame := &frames[len(frames)-1]
+			if frame.next == len(frame.edges) {
+				frames = frames[:len(frames)-1]
+				continue
+			}
+			nodeID, layerIndex := frame.node, frame.layerIndex
+			target := arena.EdgeTargetNode(frame.edges[frame.next])
+			frame.next++
+			if target == nodeID {
+				continue
+			}
+			if arena.Layer(*arena.Node(target).Layer).ID <= layerIndex {
+				newLayer := nextLayer(layerIndex)
+				arena.SetNodeLayer(target, &newLayer)
+				if len(frames) >= maxIterativeDepth {
+					checkRecursive(target)
+				} else {
+					call(target)
+				}
 			}
 		}
 	}

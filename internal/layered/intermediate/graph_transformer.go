@@ -29,7 +29,8 @@ const (
 // input direction after routing.
 func TransformGraph(arena *layered.LGraphArena, graphID layered.LGraphID, mode GraphTransformMode) {
 	graph := arena.Graph(graphID)
-	nodes := arena.GraphAllNodes(graphID)
+	// The transforms neither call GraphAllNodesScratch nor change node lists.
+	nodes := arena.GraphAllNodesScratch(graphID)
 	direction := basegraph.Get(&graph.Properties, layered.DirectionOption)
 	congruency := basegraph.Get(&graph.Properties, layered.DirectionCongruencyOption)
 
@@ -97,7 +98,7 @@ func mirrorAllX(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []la
 		node.Padding.Left, node.Padding.Right = node.Padding.Right, node.Padding.Left
 		if position, found := basegraph.TryGet(&node.Properties, layered.PositionOption); found {
 			position.X = offset - node.Size.X - position.X
-			basegraph.Set(&node.Properties, layered.PositionOption, position)
+			arena.SetPoint(&node.Properties, layered.PositionOption, position)
 		}
 		switch basegraph.Get(&node.Properties, layered.AlignmentOption) {
 		case layered.AlignmentLeft:
@@ -163,7 +164,7 @@ func mirrorAllX(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []la
 	graph.Padding.Left, graph.Padding.Right = graph.Padding.Right, graph.Padding.Left
 	padding := basegraph.Get(&graph.Properties, layered.NodeLabelsPadding)
 	padding.Left, padding.Right = padding.Right, padding.Left
-	basegraph.Set(&graph.Properties, layered.NodeLabelsPadding, padding)
+	arena.SetSpacing(&graph.Properties, layered.NodeLabelsPadding, padding)
 }
 
 func mirrorAllY(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []layered.LNodeID) {
@@ -185,7 +186,7 @@ func mirrorAllY(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []la
 		node.Padding.Top, node.Padding.Bottom = node.Padding.Bottom, node.Padding.Top
 		if position, found := basegraph.TryGet(&node.Properties, layered.PositionOption); found {
 			position.Y = offset - node.Size.Y - position.Y
-			basegraph.Set(&node.Properties, layered.PositionOption, position)
+			arena.SetPoint(&node.Properties, layered.PositionOption, position)
 		}
 		switch basegraph.Get(&node.Properties, layered.AlignmentOption) {
 		case layered.AlignmentTop:
@@ -247,7 +248,7 @@ func mirrorAllY(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []la
 	graph.Padding.Top, graph.Padding.Bottom = graph.Padding.Bottom, graph.Padding.Top
 	padding := basegraph.Get(&graph.Properties, layered.NodeLabelsPadding)
 	padding.Top, padding.Bottom = padding.Bottom, padding.Top
-	basegraph.Set(&graph.Properties, layered.NodeLabelsPadding, padding)
+	arena.SetSpacing(&graph.Properties, layered.NodeLabelsPadding, padding)
 }
 
 func transposeAll(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []layered.LNodeID) {
@@ -259,7 +260,7 @@ func transposeAll(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []
 		transposeSpacing(&node.Padding)
 		if minimum, found := basegraph.TryGet(&node.Properties, layered.NodeSizeMinimum); found {
 			transposePoint(&minimum)
-			basegraph.Set(&node.Properties, layered.NodeSizeMinimum, minimum)
+			arena.SetPoint(&node.Properties, layered.NodeSizeMinimum, minimum)
 		}
 		switch basegraph.Get(&node.Properties, layered.AlignmentOption) {
 		case layered.AlignmentLeft:
@@ -273,7 +274,7 @@ func transposeAll(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []
 		}
 		if position, found := basegraph.TryGet(&node.Properties, layered.PositionOption); found {
 			transposePoint(&position)
-			basegraph.Set(&node.Properties, layered.PositionOption, position)
+			arena.SetPoint(&node.Properties, layered.PositionOption, position)
 		}
 		for _, portID := range node.Ports {
 			port := arena.Port(portID)
@@ -320,7 +321,7 @@ func transposeAll(arena *layered.LGraphArena, graphID layered.LGraphID, nodes []
 	transposeSpacing(&graph.Padding)
 	padding := basegraph.Get(&graph.Properties, layered.NodeLabelsPadding)
 	transposeSpacing(&padding)
-	basegraph.Set(&graph.Properties, layered.NodeLabelsPadding, padding)
+	arena.SetSpacing(&graph.Properties, layered.NodeLabelsPadding, padding)
 	selection := basegraph.Get(&graph.Properties, layered.EdgeLabelSideSelectionOption)
 	switch selection {
 	case layered.EdgeLabelSideAlwaysUp:

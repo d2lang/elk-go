@@ -16,11 +16,25 @@ import (
 
 // ProcessInLayerConstraints moves TOP nodes before ordinary nodes and BOTTOM
 // nodes to the end while preserving the encounter order within each group.
+// inLayerConstraintScratch holds ProcessInLayerConstraints' per-layer
+// snapshot and bottom list (layered.ScratchInLayerConstraints), refilled for
+// every layer.
+type inLayerConstraintScratch struct {
+	original []layered.LNodeID
+	bottom   []layered.LNodeID
+}
+
 func ProcessInLayerConstraints(arena *layered.LGraphArena, graphID layered.LGraphID) {
+	scratch, _ := arena.Scratch(layered.ScratchInLayerConstraints).(*inLayerConstraintScratch)
+	if scratch == nil {
+		scratch = &inLayerConstraintScratch{}
+		arena.SetScratch(layered.ScratchInLayerConstraints, scratch)
+	}
 	for _, layerID := range arena.Graph(graphID).Layers {
-		original := append([]layered.LNodeID(nil), arena.Layer(layerID).Nodes...)
+		original := append(scratch.original[:0], arena.Layer(layerID).Nodes...)
+		scratch.original = original
 		topInsertionIndex := -1
-		bottom := make([]layered.LNodeID, 0)
+		bottom := scratch.bottom[:0]
 		for index, nodeID := range original {
 			constraint := basegraph.Get(&arena.Node(nodeID).Properties, layered.InternalInLayerConstraint)
 			if topInsertionIndex < 0 {
@@ -36,6 +50,7 @@ func ProcessInLayerConstraints(arena *layered.LGraphArena, graphID layered.LGrap
 				bottom = append(bottom, nodeID)
 			}
 		}
+		scratch.bottom = bottom
 		for _, nodeID := range bottom {
 			arena.SetNodeLayer(nodeID, nil)
 			arena.SetNodeLayer(nodeID, &layerID)

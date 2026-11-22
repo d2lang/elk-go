@@ -32,11 +32,11 @@ func TestTransferrerAppliesNodePortAndEdgeLayout(t *testing.T) {
 	}
 	arena.Graph(graphID).Padding = geometry.Spacing{Left: 5, Top: 7}
 	arena.Graph(graphID).Size = geometry.Point{X: 100, Y: 30}
-	arena.Node(importer.Maps.Nodes[first]).Position = geometry.Point{X: 10, Y: 3}
-	arena.Node(importer.Maps.Nodes[second]).Position = geometry.Point{X: 70, Y: 3}
-	arena.Port(importer.Maps.Ports[source]).Anchor = geometry.Point{X: 2, Y: 1}
-	arena.Port(importer.Maps.Ports[target]).Anchor = geometry.Point{X: 1, Y: 1}
-	arena.Edge(importer.Maps.Edges[edge]).BendPoints = geometry.Chain{{X: 40, Y: 9}}
+	arena.Node(importer.Maps.Nodes.At(first)).Position = geometry.Point{X: 10, Y: 3}
+	arena.Node(importer.Maps.Nodes.At(second)).Position = geometry.Point{X: 70, Y: 3}
+	arena.Port(importer.Maps.Ports.At(source)).Anchor = geometry.Point{X: 2, Y: 1}
+	arena.Port(importer.Maps.Ports.At(target)).Anchor = geometry.Point{X: 1, Y: 1}
+	arena.Edge(importer.Maps.Edges.At(edge)).BendPoints = geometry.Chain{{X: 40, Y: 9}}
 
 	if err := NewElkGraphLayoutTransferrer(model, importer.Maps).ApplyLayout(arena, graphID); err != nil {
 		t.Fatal(err)
@@ -76,8 +76,8 @@ func TestTransferrerPreservesJavaEndpointEvaluationOrder(t *testing.T) {
 	// ELK first computes the absolute port anchor, then adds the graph offset.
 	arena.Graph(graphID).Padding = geometry.Spacing{}
 	arena.Graph(graphID).Offset.X = 167.83333333333334
-	arena.Node(importer.Maps.Nodes[sourceNode]).Position.X = 8.1666666666666714
-	arena.Port(importer.Maps.Ports[sourcePort]).Position.X = 68.666666666666657
+	arena.Node(importer.Maps.Nodes.At(sourceNode)).Position.X = 8.1666666666666714
+	arena.Port(importer.Maps.Ports.At(sourcePort)).Position.X = 68.666666666666657
 
 	if err := NewElkGraphLayoutTransferrer(model, importer.Maps).ApplyLayout(arena, graphID); err != nil {
 		t.Fatal(err)
@@ -101,8 +101,8 @@ func TestTransferrerOnlyAppliesNodeLabelLayoutWhenPlacementIsConfigured(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	lNode := importer.Maps.Nodes[nodeID]
-	lLabel := importer.Maps.Labels[labelID]
+	lNode := importer.Maps.Nodes.At(nodeID)
+	lLabel := importer.Maps.Labels.At(labelID)
 	arena.Label(lLabel).Position = geometry.Point{X: 100, Y: 200}
 
 	transferrer := NewElkGraphLayoutTransferrer(model, importer.Maps)
@@ -144,8 +144,8 @@ func TestTransferrerDoesNotDoubleApplyCrossHierarchyTargetOffset(t *testing.T) {
 		t.Fatal(err)
 	}
 	arena.Graph(graphID).Padding = geometry.Spacing{}
-	sourceParentNode := arena.Node(importer.Maps.Nodes[sourceParent])
-	targetParentNode := arena.Node(importer.Maps.Nodes[targetParent])
+	sourceParentNode := arena.Node(importer.Maps.Nodes.At(sourceParent))
+	targetParentNode := arena.Node(importer.Maps.Nodes.At(targetParent))
 	sourceParentNode.Position = geometry.Point{X: 10, Y: 20}
 	targetParentNode.Position = geometry.Point{X: 200, Y: 300}
 	sourceGraph := *sourceParentNode.NestedGraph
@@ -154,9 +154,9 @@ func TestTransferrerDoesNotDoubleApplyCrossHierarchyTargetOffset(t *testing.T) {
 	arena.Graph(sourceGraph).Padding = geometry.Spacing{Left: 5, Top: 6}
 	arena.Graph(targetGraph).Offset = geometry.Point{X: 7, Y: 8}
 	arena.Graph(targetGraph).Padding = geometry.Spacing{Left: 9, Top: 10}
-	arena.Node(importer.Maps.Nodes[sourceNode]).Position = geometry.Point{X: 11, Y: 12}
-	arena.Node(importer.Maps.Nodes[targetNode]).Position = geometry.Point{X: 13, Y: 14}
-	lEdge := importer.Maps.Edges[edge]
+	arena.Node(importer.Maps.Nodes.At(sourceNode)).Position = geometry.Point{X: 11, Y: 12}
+	arena.Node(importer.Maps.Nodes.At(targetNode)).Position = geometry.Point{X: 13, Y: 14}
+	lEdge := importer.Maps.Edges.At(edge)
 	// CompoundGraphPostprocessor computes TARGET_OFFSET by changing from the
 	// target graph's coordinates into the source reference graph.
 	basegraph.Set(&arena.Edge(lEdge).Properties, TargetOffset,

@@ -29,9 +29,9 @@ func TestModelOrderBarycenterKeepsRealNodeOrder(t *testing.T) {
 	InitializeForsterConstraintResolver(resolver, arena, order)
 	heuristic := NewBarycenterHeuristic(arena, resolver, javacompat.NewRandom(1), distributor)
 	heuristic.ModelOrder = NewModelOrderBarycenterHeuristic(true)
-	resolver.state(arena, first).Barycenter = floatPtr(2)
-	resolver.state(arena, dummy).Barycenter = floatPtr(0)
-	resolver.state(arena, second).Barycenter = floatPtr(1)
+	resolver.state(arena, first).setBarycenter(2)
+	resolver.state(arena, dummy).setBarycenter(0)
+	resolver.state(arena, second).setBarycenter(1)
 	heuristic.ModelOrder.sort(heuristic, order[0])
 	firstIndex, secondIndex := -1, -1
 	for index, nodeID := range order[0] {

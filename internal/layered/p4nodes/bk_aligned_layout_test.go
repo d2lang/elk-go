@@ -19,13 +19,13 @@ func TestBKAlignedLayoutSizeDeltaAndShift(t *testing.T) {
 	layout := NewBKAlignedLayout(graphID, info.NodeCount, VerticalDown, HorizontalLeft)
 	for _, nodeID := range []layered.LNodeID{first, second} {
 		index := arena.Node(nodeID).ID
-		layout.Root[index] = nodePointer(nodeID)
-		layout.Align[index] = nodePointer(nodeID)
-		layout.InnerShift[index] = floatPointer(0)
-		layout.BlockSize[index] = floatPointer(arena.Node(nodeID).Size.Y)
+		layout.Root[index] = someNode(nodeID)
+		layout.Align[index] = someNode(nodeID)
+		layout.InnerShift[index] = someFloat(0)
+		layout.BlockSize[index] = someFloat(arena.Node(nodeID).Size.Y)
 	}
-	layout.Y[arena.Node(first).ID] = floatPointer(5)
-	layout.Y[arena.Node(second).ID] = floatPointer(30)
+	layout.Y[arena.Node(first).ID] = someFloat(5)
+	layout.Y[arena.Node(second).ID] = someFloat(30)
 	if got := layout.LayoutSize(arena); got != 45 {
 		t.Fatalf("layout size = %v, want 45", got)
 	}
@@ -50,13 +50,13 @@ func TestBKAlignedLayoutSpacingChecks(t *testing.T) {
 	layout := NewBKAlignedLayout(graphID, 2, VerticalDown, HorizontalLeft)
 	for _, nodeID := range []layered.LNodeID{upper, lower} {
 		index := arena.Node(nodeID).ID
-		layout.Root[index] = nodePointer(nodeID)
-		layout.Align[index] = nodePointer(nodeID)
-		layout.InnerShift[index] = floatPointer(0)
-		layout.BlockSize[index] = floatPointer(10)
+		layout.Root[index] = someNode(nodeID)
+		layout.Align[index] = someNode(nodeID)
+		layout.InnerShift[index] = someFloat(0)
+		layout.BlockSize[index] = someFloat(10)
 	}
-	layout.Y[arena.Node(upper).ID] = floatPointer(0)
-	layout.Y[arena.Node(lower).ID] = floatPointer(40)
+	layout.Y[arena.Node(upper).ID] = someFloat(0)
+	layout.Y[arena.Node(lower).ID] = someFloat(40)
 	if got := layout.CheckSpaceAbove(arena, lower, math.Inf(1), info); got != 10 {
 		t.Fatalf("space above = %v, want 10", got)
 	}

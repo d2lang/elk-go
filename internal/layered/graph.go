@@ -14,9 +14,11 @@ package layered
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/d2lang/elk-go/internal/geometry"
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/reuse"
 )
 
 type LGraphID uint32
@@ -196,9 +198,236 @@ type LGraphArena struct {
 	Edges  []LEdge
 	Labels []LLabel
 	Layers []Layer
+
+	// Immutable cells holding every ID value, for the optional-ID pointer
+	// fields (LPort.Node, LEdge.Source/Target, LNode.Layer). Nothing writes
+	// through those pointers or compares them (only their targets are read
+	// and only nil is tested), so pointing at a shared cell holding the value
+	// is the same as pointing at a fresh copy of it. The cells depend only on
+	// their index, so they are kept when the arena is reused.
+	nodeCells  idCellTable[LNodeID]
+	portCells  idCellTable[LPortID]
+	layerCells idCellTable[LayerID]
+
+	// Boxed origins by kind and ID, made on first use and kept when the arena
+	// is reused (see SetOrigin).
+	origins [OriginLPort + 1][]any
+
+	// allNodes backs GraphAllNodesScratch.
+	allNodes []LNodeID
+
+	// scratch holds processors' working storage (see Scratch).
+	scratch [scratchSlots]any
+
+	// The last boxed Point and Spacing values SetPoint/SetSpacing stored.
+	lastPoint      geometry.Point
+	lastPointBox   any
+	lastSpacing    geometry.Spacing
+	lastSpacingBox any
+}
+
+// SetPoint is basegraph.Set for a Point property. A value equal bit for bit
+// to the previous one stored this way shares its box: a boxed struct cannot
+// change (reading it copies it out), so a shared box holding an identical
+// value is the same as a new one.
+func (arena *LGraphArena) SetPoint(
+	properties *basegraph.PropertyMap,
+	property basegraph.Property[geometry.Point],
+	value geometry.Point,
+) {
+	if arena.lastPointBox == nil ||
+		math.Float64bits(arena.lastPoint.X) != math.Float64bits(value.X) ||
+		math.Float64bits(arena.lastPoint.Y) != math.Float64bits(value.Y) {
+		arena.lastPoint, arena.lastPointBox = value, value
+	}
+	properties.SetRawKey(property.Key(), arena.lastPointBox)
+}
+
+// SetSpacing is SetPoint for a Spacing property.
+func (arena *LGraphArena) SetSpacing(
+	properties *basegraph.PropertyMap,
+	property basegraph.Property[geometry.Spacing],
+	value geometry.Spacing,
+) {
+	last := arena.lastSpacing
+	if arena.lastSpacingBox == nil ||
+		math.Float64bits(last.Top) != math.Float64bits(value.Top) ||
+		math.Float64bits(last.Right) != math.Float64bits(value.Right) ||
+		math.Float64bits(last.Bottom) != math.Float64bits(value.Bottom) ||
+		math.Float64bits(last.Left) != math.Float64bits(value.Left) {
+		arena.lastSpacing, arena.lastSpacingBox = value, value
+	}
+	properties.SetRawKey(property.Key(), arena.lastSpacingBox)
+}
+
+// ScratchSlot names the working storage one processor keeps in an arena.
+type ScratchSlot uint8
+
+const (
+	ScratchGreedyCycles ScratchSlot = iota
+	ScratchConnectedComponents
+	ScratchLayerConstraints
+	ScratchCycleDetector
+	ScratchInLayerConstraints
+	ScratchNetworkSimplexLayering
+	scratchSlots
+)
+
+// Scratch returns the value last stored in slot by SetScratch, or nil. The
+// value stays with the arena when its storage is reused for later layouts:
+// it must be working storage that its processor resets before reading, that
+// refers to no element of the arena by pointer, and that is not in use while
+// the processor is entered again. Processors store grown buffers back into
+// it on their normal returns (see package reuse).
+func (arena *LGraphArena) Scratch(slot ScratchSlot) any { return arena.scratch[slot] }
+
+// SetScratch stores value in slot (see Scratch).
+func (arena *LGraphArena) SetScratch(slot ScratchSlot, value any) { arena.scratch[slot] = value }
+
+// maxBoxedOriginID bounds the IDs whose boxed origins are kept.
+const maxBoxedOriginID = 1 << 16
+
+// SetOrigin is basegraph.Set(properties, OriginalElement, origin). Origins
+// made by the kind constructors (NodeOrigin, LEdgeOrigin, ...) are stored
+// from a box kept per kind and ID: an interface holding a struct value cannot
+// be changed, so a shared box holding an equal origin is the same as boxing
+// the origin anew.
+func (arena *LGraphArena) SetOrigin(properties *basegraph.PropertyMap, origin Origin) {
+	id, canonical := origin.canonicalID()
+	if !canonical || id >= maxBoxedOriginID {
+		basegraph.Set(properties, OriginalElement, origin)
+		return
+	}
+	boxes := arena.origins[origin.Kind]
+	if int(id) >= len(boxes) {
+		if int(id) < cap(boxes) {
+			boxes = boxes[:int(id)+1]
+		} else {
+			grown := make([]any, int(id)+1, 2*int(id)+2)
+			copy(grown, boxes)
+			boxes = grown
+		}
+		arena.origins[origin.Kind] = boxes
+	}
+	if boxes[id] == nil {
+		boxes[id] = origin
+	}
+	properties.SetRawKey(OriginalElement.Key(), boxes[id])
+}
+
+const idCellChunk = 256
+
+// idCellTable hands out pointers to cells whose value is their index. Cells
+// live in fixed chunks that are never moved or written after creation.
+type idCellTable[T ~uint32] struct {
+	chunks []*[idCellChunk]T
+}
+
+func (table *idCellTable[T]) cell(id T) *T {
+	index := int(id) / idCellChunk
+	for index >= len(table.chunks) {
+		chunk := new([idCellChunk]T)
+		base := len(table.chunks) * idCellChunk
+		for offset := range chunk {
+			chunk[offset] = T(base + offset)
+		}
+		table.chunks = append(table.chunks, chunk)
+	}
+	return &table.chunks[index][int(id)%idCellChunk]
 }
 
 func NewLGraphArena() *LGraphArena { return &LGraphArena{} }
+
+// Released arenas keep their slices' storage for the next layout. Element
+// pointers into an arena are never used after the arena may have grown
+// (checked statically and by tests with an arena that moves on every Add), so
+// the capacity an arena starts with is not observable.
+var arenaPool reuse.Pool[LGraphArena]
+
+// A released arena in the slot may stay alive indefinitely, so the storage it
+// keeps is bounded: an arena of more than maxSlotArenaElements element slots
+// goes to the sync.Pool only (gc), which garbage collection empties, or is
+// dropped (TinyGo, see reuse.OversizedToPool), a kept slot keeps at most maxKeptPropertyEntries entries of
+// property storage, and at most maxKeptOriginBoxes boxed origins of each kind
+// are kept. A slot with its storage takes at most about 1.2 KB on a 64-bit
+// platform (an LNode is 320 bytes, 32 property entries 768, its ID lists
+// little), so a kept arena about 5 MB with its origin boxes (0.7 MB), ID
+// cells and processors' scratch (sized by the same elements); the corpus's
+// largest arena has 2449 slots and 15747 entries of property storage.
+const (
+	maxSlotArenaElements   = 1 << 12
+	maxKeptPropertyEntries = 32
+	maxKeptOriginBoxes     = 1 << 11
+)
+
+// AcquireLGraphArena returns an empty arena, reusing released storage when
+// some is available.
+func AcquireLGraphArena() *LGraphArena {
+	if arena := arenaPool.Get(); arena != nil {
+		return arena
+	}
+	return &LGraphArena{}
+}
+
+// ReleaseLGraphArena empties arena and offers its storage for reuse. Neither
+// the arena nor anything obtained from it may be used afterwards.
+//
+// The released elements stay in their slots beyond the slices' lengths: each
+// Add* overwrites its slot with a whole new element, taking only the slot's
+// property storage. The elements give up here what they refer to that may be
+// the caller's (property values, label texts): their property storage is
+// emptied (and dropped when large), and the boxes of the last stored point
+// and spacing are dropped. Nothing else reads beyond the lengths.
+func ReleaseLGraphArena(arena *LGraphArena) {
+	if arena == nil {
+		return
+	}
+	elements := cap(arena.Graphs) + cap(arena.Nodes) + cap(arena.Ports) +
+		cap(arena.Edges) + cap(arena.Labels) + cap(arena.Layers)
+	oversized := elements > maxSlotArenaElements
+	if oversized && !reuse.OversizedToPool {
+		return
+	}
+	for index := range arena.Graphs {
+		keepPropertyStorage(&arena.Graphs[index].Properties)
+	}
+	for index := range arena.Nodes {
+		keepPropertyStorage(&arena.Nodes[index].Properties)
+	}
+	for index := range arena.Ports {
+		keepPropertyStorage(&arena.Ports[index].Properties)
+	}
+	for index := range arena.Edges {
+		keepPropertyStorage(&arena.Edges[index].Properties)
+	}
+	for index := range arena.Labels {
+		arena.Labels[index].Text = ""
+		keepPropertyStorage(&arena.Labels[index].Properties)
+	}
+	for index := range arena.Layers {
+		keepPropertyStorage(&arena.Layers[index].Properties)
+	}
+	for kind := range arena.origins {
+		if cap(arena.origins[kind]) > maxKeptOriginBoxes {
+			arena.origins[kind] = nil
+		}
+	}
+	arena.lastPointBox, arena.lastSpacingBox = nil, nil
+	arena.Graphs, arena.Nodes, arena.Ports = arena.Graphs[:0], arena.Nodes[:0], arena.Ports[:0]
+	arena.Edges, arena.Labels, arena.Layers = arena.Edges[:0], arena.Labels[:0], arena.Layers[:0]
+	arenaPool.Put(arena, !oversized)
+}
+
+// keepPropertyStorage empties properties for the next element of its slot:
+// the entries are cleared, so that nothing they refer to is kept alive, and
+// their storage is kept unless it holds more than maxKeptPropertyEntries.
+func keepPropertyStorage(properties *basegraph.PropertyMap) {
+	if properties.EntryCapacity() > maxKeptPropertyEntries {
+		*properties = basegraph.PropertyMap{}
+		return
+	}
+	*properties = properties.Recycled()
+}
 
 func (arena *LGraphArena) Graph(id LGraphID) *LGraph { return &arena.Graphs[id.Index()] }
 func (arena *LGraphArena) Node(id LNodeID) *LNode    { return &arena.Nodes[id.Index()] }
@@ -207,9 +436,18 @@ func (arena *LGraphArena) Edge(id LEdgeID) *LEdge    { return &arena.Edges[id.In
 func (arena *LGraphArena) Label(id LLabelID) *LLabel { return &arena.Labels[id.Index()] }
 func (arena *LGraphArena) Layer(id LayerID) *Layer   { return &arena.Layers[id.Index()] }
 
+// Each Add* gives the new element the property storage of the element left
+// in its slot by ReleaseLGraphArena (none in a fresh arena), emptied there
+// (Recycled again here, which then finds nothing to clear); an element's
+// property map starts empty either way.
+
 func (arena *LGraphArena) AddGraph() LGraphID {
 	id := LGraphID(len(arena.Graphs))
-	arena.Graphs = append(arena.Graphs, LGraph{})
+	var properties basegraph.PropertyMap
+	if n := len(arena.Graphs); n < cap(arena.Graphs) {
+		properties = arena.Graphs[:n+1][n].Properties.Recycled()
+	}
+	arena.Graphs = append(arena.Graphs, LGraph{Properties: properties})
 	return id
 }
 
@@ -217,25 +455,41 @@ func (arena *LGraphArena) AddGraph() LGraphID {
 // explicitly, just as the Java importer does.
 func (arena *LGraphArena) AddNode(graphID LGraphID) LNodeID {
 	id := LNodeID(len(arena.Nodes))
-	arena.Nodes = append(arena.Nodes, LNode{Graph: graphID, Type: NormalNode})
+	var properties basegraph.PropertyMap
+	if n := len(arena.Nodes); n < cap(arena.Nodes) {
+		properties = arena.Nodes[:n+1][n].Properties.Recycled()
+	}
+	arena.Nodes = append(arena.Nodes, LNode{Graph: graphID, Type: NormalNode, Properties: properties})
 	return id
 }
 
 func (arena *LGraphArena) AddPort() LPortID {
 	id := LPortID(len(arena.Ports))
-	arena.Ports = append(arena.Ports, LPort{ConnectedToExternalNodes: true})
+	var properties basegraph.PropertyMap
+	if n := len(arena.Ports); n < cap(arena.Ports) {
+		properties = arena.Ports[:n+1][n].Properties.Recycled()
+	}
+	arena.Ports = append(arena.Ports, LPort{ConnectedToExternalNodes: true, Properties: properties})
 	return id
 }
 
 func (arena *LGraphArena) AddEdge() LEdgeID {
 	id := LEdgeID(len(arena.Edges))
-	arena.Edges = append(arena.Edges, LEdge{})
+	var properties basegraph.PropertyMap
+	if n := len(arena.Edges); n < cap(arena.Edges) {
+		properties = arena.Edges[:n+1][n].Properties.Recycled()
+	}
+	arena.Edges = append(arena.Edges, LEdge{Properties: properties})
 	return id
 }
 
 func (arena *LGraphArena) AddLabel(text string) LLabelID {
 	id := LLabelID(len(arena.Labels))
-	arena.Labels = append(arena.Labels, LLabel{Text: text})
+	var properties basegraph.PropertyMap
+	if n := len(arena.Labels); n < cap(arena.Labels) {
+		properties = arena.Labels[:n+1][n].Properties.Recycled()
+	}
+	arena.Labels = append(arena.Labels, LLabel{Text: text, Properties: properties})
 	return id
 }
 
@@ -243,7 +497,11 @@ func (arena *LGraphArena) AddLabel(text string) LLabelID {
 // graph.Layers. This mirrors the subtle Java constructor behavior.
 func (arena *LGraphArena) AddLayer(graphID LGraphID) LayerID {
 	id := LayerID(len(arena.Layers))
-	arena.Layers = append(arena.Layers, Layer{Graph: graphID})
+	var properties basegraph.PropertyMap
+	if n := len(arena.Layers); n < cap(arena.Layers) {
+		properties = arena.Layers[:n+1][n].Properties.Recycled()
+	}
+	arena.Layers = append(arena.Layers, Layer{Graph: graphID, Properties: properties})
 	return id
 }
 
@@ -254,7 +512,10 @@ func (arena *LGraphArena) SetPortNode(portID LPortID, nodeID *LNodeID) {
 		arena.Node(old).Ports = removePort(arena.Node(old).Ports, portID)
 		arena.InvalidatePortSideCache(old)
 	}
-	port.Node = copyLNodeID(nodeID)
+	port.Node = nil
+	if nodeID != nil {
+		port.Node = arena.nodeCells.cell(*nodeID)
+	}
 	if nodeID != nil {
 		arena.Node(*nodeID).Ports = append(arena.Node(*nodeID).Ports, portID)
 		arena.InvalidatePortSideCache(*nodeID)
@@ -286,7 +547,10 @@ func (arena *LGraphArena) SetEdgeSource(edgeID LEdgeID, portID *LPortID) {
 	if edge.Source != nil {
 		arena.Port(*edge.Source).OutgoingEdges = removeEdge(arena.Port(*edge.Source).OutgoingEdges, edgeID)
 	}
-	edge.Source = copyLPortID(portID)
+	edge.Source = nil
+	if portID != nil {
+		edge.Source = arena.portCells.cell(*portID)
+	}
 	if portID != nil {
 		arena.Port(*portID).OutgoingEdges = append(arena.Port(*portID).OutgoingEdges, edgeID)
 	}
@@ -301,7 +565,10 @@ func (arena *LGraphArena) SetEdgeTargetAt(edgeID LEdgeID, portID *LPortID, index
 	if edge.Target != nil {
 		arena.Port(*edge.Target).IncomingEdges = removeEdge(arena.Port(*edge.Target).IncomingEdges, edgeID)
 	}
-	edge.Target = copyLPortID(portID)
+	edge.Target = nil
+	if portID != nil {
+		edge.Target = arena.portCells.cell(*portID)
+	}
 	if portID == nil {
 		return
 	}
@@ -328,7 +595,10 @@ func (arena *LGraphArena) SetNodeLayerAt(nodeID LNodeID, layerID *LayerID, index
 	if node.Layer != nil {
 		arena.Layer(*node.Layer).Nodes = removeNode(arena.Layer(*node.Layer).Nodes, nodeID)
 	}
-	node.Layer = copyLayerID(layerID)
+	node.Layer = nil
+	if layerID != nil {
+		node.Layer = arena.layerCells.cell(*layerID)
+	}
 	if layerID == nil {
 		return
 	}
@@ -378,6 +648,14 @@ func (arena *LGraphArena) NodeConnectedEdges(nodeID LNodeID) []LEdgeID {
 		edges = append(edges, port.OutgoingEdges...)
 	}
 	return edges
+}
+
+// PortEdgeLists returns the port's incoming and outgoing edge lists;
+// iterating them in order visits PortConnectedEdges' edges without copying
+// them. Callers must not change the lists while iterating.
+func (arena *LGraphArena) PortEdgeLists(portID LPortID) [2][]LEdgeID {
+	port := arena.Port(portID)
+	return [2][]LEdgeID{port.IncomingEdges, port.OutgoingEdges}
 }
 
 func (arena *LGraphArena) PortConnectedEdges(portID LPortID) []LEdgeID {
@@ -523,9 +801,37 @@ func (arena *LGraphArena) GraphActualSize(graphID LGraphID) geometry.Point {
 	}
 }
 
+// GraphAllNodesScratch is GraphAllNodes filled into storage the arena keeps:
+// the list is valid until the next GraphAllNodesScratch call, so only a
+// caller that does not call it again (directly or through what it calls)
+// while using the list may use it. It is nil when there are no nodes, like
+// GraphAllNodes' result.
+func (arena *LGraphArena) GraphAllNodesScratch(graphID LGraphID) []LNodeID {
+	graph := arena.Graph(graphID)
+	nodes := append(arena.allNodes[:0], graph.LayerlessNodes...)
+	for _, layerID := range graph.Layers {
+		nodes = append(nodes, arena.Layer(layerID).Nodes...)
+	}
+	arena.allNodes = nodes
+	if len(nodes) == 0 {
+		return nil
+	}
+	return nodes
+}
+
 func (arena *LGraphArena) GraphAllNodes(graphID LGraphID) []LNodeID {
 	graph := arena.Graph(graphID)
-	nodes := append([]LNodeID(nil), graph.LayerlessNodes...)
+	// One allocation of the final size; nil when there are no nodes, as the
+	// appends to a nil slice gave.
+	total := len(graph.LayerlessNodes)
+	for _, layerID := range graph.Layers {
+		total += len(arena.Layer(layerID).Nodes)
+	}
+	if total == 0 {
+		return nil
+	}
+	nodes := make([]LNodeID, 0, total)
+	nodes = append(nodes, graph.LayerlessNodes...)
 	for _, layerID := range graph.Layers {
 		nodes = append(nodes, arena.Layer(layerID).Nodes...)
 	}
@@ -541,30 +847,6 @@ func (arena *LGraphArena) NodeBorderToContentCoordinates(nodeID LNodeID, horizon
 	if vertical {
 		node.Position.Y -= graph.Padding.Top + graph.Offset.Y
 	}
-}
-
-func copyLNodeID(value *LNodeID) *LNodeID {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
-}
-
-func copyLPortID(value *LPortID) *LPortID {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
-}
-
-func copyLayerID(value *LayerID) *LayerID {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
 }
 
 func removeNode(values []LNodeID, target LNodeID) []LNodeID {

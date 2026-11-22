@@ -20,18 +20,18 @@ import (
 // These properties retain the exact CoreOptions identifiers used by ELK
 // v0.8.1. They live here until the generated option metadata is ported.
 var (
-	Margins = graph.CloneablePropertyWithDefault("org.eclipse.elk.margins", func() geometry.Spacing {
+	Margins = graph.CloneablePropertyWithConstantDefault("org.eclipse.elk.margins", func() geometry.Spacing {
 		return geometry.Spacing{}
 	})
 	SpacingLabelNode = graph.PropertyWithDefault("org.eclipse.elk.spacing.labelNode", func() float64 { return 5 })
 	SpacingPortPort  = graph.PropertyWithDefault("org.eclipse.elk.spacing.portPort", func() float64 { return 10 })
 
-	NodeLabelsPlacement = graph.CloneablePropertyWithDefault("org.eclipse.elk.nodeLabels.placement", func() []string { return nil })
-	PortLabelsPlacement = graph.CloneablePropertyWithDefault("org.eclipse.elk.portLabels.placement", func() []string {
+	NodeLabelsPlacement = graph.CloneablePropertyWithConstantDefault("org.eclipse.elk.nodeLabels.placement", func() []string { return nil })
+	PortLabelsPlacement = graph.CloneablePropertyWithConstantDefault("org.eclipse.elk.portLabels.placement", func() []string {
 		return []string{"OUTSIDE"}
 	})
 	EdgeLabelsPlacement = graph.PropertyWithDefault("org.eclipse.elk.edgeLabels.placement", func() string { return "CENTER" })
-	NodeSizeOptions     = graph.CloneablePropertyWithDefault("org.eclipse.elk.nodeSize.options", func() []string {
+	NodeSizeOptions     = graph.CloneablePropertyWithConstantDefault("org.eclipse.elk.nodeSize.options", func() []string {
 		return []string{"DEFAULT_MINIMUM_SIZE"}
 	})
 	PortBorderOffset = graph.PropertyWithDefault("org.eclipse.elk.port.borderOffset", func() float64 { return 0 })

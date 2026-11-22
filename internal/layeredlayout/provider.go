@@ -15,6 +15,7 @@ package layeredlayout
 
 import (
 	"fmt"
+	"math/bits"
 
 	"github.com/d2lang/elk-go/internal/core"
 	basegraph "github.com/d2lang/elk-go/internal/graph"
@@ -50,6 +51,24 @@ func (*Provider) Layout(model *basegraph.Model, parent basegraph.NodeID, monitor
 	if err != nil {
 		return err
 	}
+	err = layoutArena(model, importer, arena, topGraph, monitor)
+	// The arena is private to this call: its storage is reused by later
+	// layouts once the result has been transferred to the model. It goes back
+	// to the pool only from a call that returned: one that panics may leave
+	// the arena and its processors' scratch half-updated, so it is dropped
+	// with the call instead.
+	layered.ReleaseLGraphArena(arena)
+	return err
+}
+
+// layoutArena is the rest of Layout, on the imported arena.
+func layoutArena(
+	model *basegraph.Model,
+	importer *layered.ElkGraphImporter,
+	arena *layered.LGraphArena,
+	topGraph layered.LGraphID,
+	monitor core.ProgressMonitor,
+) error {
 	if basegraph.Get(&arena.Graph(topGraph).Properties, layered.Hierarchy) == layered.HierarchyIncludeChildren {
 		preprocessor := &layered.CompoundGraphPreprocessor{}
 		if err := preprocessor.Process(arena, topGraph); err != nil {
@@ -103,15 +122,14 @@ func runComponents(
 }
 
 func collectGraphsBottomUp(arena *layered.LGraphArena, root layered.LGraphID) []layered.LGraphID {
-	queue := []layered.LGraphID{root}
+	// Breadth first: the graphs are taken from the queue in the order they
+	// entered it, so the queue itself is the visiting order.
 	graphs := make([]layered.LGraphID, 0, len(arena.Graphs))
-	for len(queue) > 0 {
-		graphID := queue[0]
-		queue = queue[1:]
-		graphs = append(graphs, graphID)
-		for _, nodeID := range arena.Graph(graphID).LayerlessNodes {
+	graphs = append(graphs, root)
+	for head := 0; head < len(graphs); head++ {
+		for _, nodeID := range arena.Graph(graphs[head]).LayerlessNodes {
 			if nested := arena.Node(nodeID).NestedGraph; nested != nil {
-				queue = append(queue, *nested)
+				graphs = append(graphs, *nested)
 			}
 		}
 	}
@@ -137,10 +155,19 @@ func runGraph(arena *layered.LGraphArena, graphID layered.LGraphID, monitor core
 type graphRun struct {
 	graphID       layered.LGraphID
 	configuration layered.PipelineConfiguration
-	phases        []layered.LayoutProcessor
+	phases        [5]layered.LayoutProcessor
 }
 
 func prepareGraphRun(arena *layered.LGraphArena, graphID layered.LGraphID) (*graphRun, error) {
+	run := &graphRun{}
+	if err := prepareGraphRunInto(arena, graphID, run); err != nil {
+		return nil, err
+	}
+	return run, nil
+}
+
+// prepareGraphRunInto is prepareGraphRun filling run.
+func prepareGraphRunInto(arena *layered.LGraphArena, graphID layered.LGraphID, run *graphRun) error {
 	configuration := layered.BasePipelineConfiguration(arena, graphID)
 	// GraphConfigurator makes this decision before phase 2 consumes
 	// LayerlessNodes; the strict activation threshold is observable.
@@ -149,7 +176,7 @@ func prepareGraphRun(arena *layered.LGraphArena, graphID layered.LGraphID) (*gra
 	}
 	phases, err := selectPhases(arena, graphID, configuration.Phases)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, phase := range phases {
 		if configured, ok := phase.(layered.ConfiguredProcessor); ok {
@@ -157,7 +184,8 @@ func prepareGraphRun(arena *layered.LGraphArena, graphID layered.LGraphID) (*gra
 		}
 	}
 
-	return &graphRun{graphID: graphID, configuration: configuration, phases: phases}, nil
+	*run = graphRun{graphID: graphID, configuration: configuration, phases: phases}
+	return nil
 }
 
 func (run *graphRun) runSlot(
@@ -166,7 +194,10 @@ func (run *graphRun) runSlot(
 	runPhase bool,
 	monitor core.ProgressMonitor,
 ) error {
-	for _, strategy := range run.configuration.Intermediates.Slot(slot) {
+	// Iterate a snapshot of the slot in ascending strategy order (ELK iterates
+	// the slot's EnumSet).
+	for set := run.configuration.Intermediates.SlotSet(slot); set != 0; set &= set - 1 {
+		strategy := layered.IntermediateProcessorStrategy(bits.TrailingZeros64(set))
 		if err := runIntermediate(arena, run.graphID, strategy); err != nil {
 			return err
 		}
@@ -185,11 +216,13 @@ func (run *graphRun) runSlot(
 // paused at the shared sweep, and resumed bottom-up afterwards.
 func runHierarchy(arena *layered.LGraphArena, root layered.LGraphID, monitor core.ProgressMonitor) error {
 	graphIDs := collectGraphsBottomUp(arena, root)
+	// All runs in one allocation; each is filled in place.
+	runStorage := make([]graphRun, len(graphIDs))
 	runs := make([]*graphRun, 0, len(graphIDs))
 	var rootRun *graphRun
-	for _, graphID := range graphIDs {
-		run, err := prepareGraphRun(arena, graphID)
-		if err != nil {
+	for index, graphID := range graphIDs {
+		run := &runStorage[index]
+		if err := prepareGraphRunInto(arena, graphID, run); err != nil {
 			return err
 		}
 		runs = append(runs, run)
@@ -246,15 +279,22 @@ func runHierarchy(arena *layered.LGraphArena, root layered.LGraphID, monitor cor
 	return nil
 }
 
+// Cycle breakers keep no state (only their configuration flag, never
+// changed), so one of each serves every run.
+var (
+	greedyCycleBreaker           = p1cycles.NewGreedyCycleBreaker()
+	greedyModelOrderCycleBreaker = p1cycles.NewGreedyModelOrderCycleBreaker()
+)
+
 func selectPhases(
 	arena *layered.LGraphArena,
 	graphID layered.LGraphID,
 	strategies layered.PhaseStrategies,
-) ([]layered.LayoutProcessor, error) {
+) ([5]layered.LayoutProcessor, error) {
 	var cycle layered.LayoutProcessor
 	switch strategies.CycleBreaking {
 	case layered.CycleBreakingGreedy:
-		cycle = p1cycles.NewGreedyCycleBreaker()
+		cycle = greedyCycleBreaker
 	case layered.CycleBreakingDepthFirst:
 		cycle = &p1cycles.DepthFirstCycleBreaker{}
 	case layered.CycleBreakingInteractive:
@@ -262,13 +302,13 @@ func selectPhases(
 	case layered.CycleBreakingModelOrder:
 		cycle = &p1cycles.ModelOrderCycleBreaker{}
 	case layered.CycleBreakingGreedyModelOrder:
-		cycle = p1cycles.NewGreedyModelOrderCycleBreaker()
+		cycle = greedyModelOrderCycleBreaker
 	case layered.CycleBreakingDFSNodeOrder:
 		cycle = &p1cycles.DFSNodeOrderCycleBreaker{}
 	case layered.CycleBreakingSCCNodeType:
 		cycle = &p1cycles.SCCNodeTypeCycleBreaker{}
 	default:
-		return nil, fmt.Errorf("layered: cycle-breaking strategy %v is not implemented", strategies.CycleBreaking)
+		return [5]layered.LayoutProcessor{}, fmt.Errorf("layered: cycle-breaking strategy %v is not implemented", strategies.CycleBreaking)
 	}
 	var layerer layered.LayoutProcessor
 	switch strategies.Layering {
@@ -285,7 +325,7 @@ func selectPhases(
 	case layered.LayeringMinWidth:
 		layerer = &p2layers.MinWidthLayerer{}
 	default:
-		return nil, fmt.Errorf("layered: layering strategy %v is not implemented", strategies.Layering)
+		return [5]layered.LayoutProcessor{}, fmt.Errorf("layered: layering strategy %v is not implemented", strategies.Layering)
 	}
 	var crossing layered.LayoutProcessor
 	switch strategies.CrossingMinimization {
@@ -296,11 +336,11 @@ func selectPhases(
 	case layered.CrossingMinimizationNone:
 		crossing = &p3order.NoCrossingMinimizer{}
 	default:
-		return nil, fmt.Errorf("layered: crossing-minimization strategy %v is not implemented", strategies.CrossingMinimization)
+		return [5]layered.LayoutProcessor{}, fmt.Errorf("layered: crossing-minimization strategy %v is not implemented", strategies.CrossingMinimization)
 	}
 	placer, err := selectNodePlacer(strategies.NodePlacement)
 	if err != nil {
-		return nil, err
+		return [5]layered.LayoutProcessor{}, err
 	}
 	var router layered.LayoutProcessor
 	switch strategies.EdgeRouting {
@@ -314,9 +354,9 @@ func selectPhases(
 	case layered.EdgeRoutingSplines:
 		router = &p5edges.SplineEdgeRouter{}
 	default:
-		return nil, fmt.Errorf("layered: edge-routing strategy %v is not implemented", strategies.EdgeRouting)
+		return [5]layered.LayoutProcessor{}, fmt.Errorf("layered: edge-routing strategy %v is not implemented", strategies.EdgeRouting)
 	}
-	return []layered.LayoutProcessor{
+	return [5]layered.LayoutProcessor{
 		cycle,
 		layerer,
 		crossing,

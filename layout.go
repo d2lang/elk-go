@@ -13,28 +13,44 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/d2lang/elk-go/graphjson"
 	"github.com/d2lang/elk-go/internal/builtins"
 	"github.com/d2lang/elk-go/internal/core"
+	"github.com/d2lang/elk-go/internal/graph"
 )
 
 // Layout computes layout in place. Like elkjs, it preserves the input graph's
 // element and slice order and adds computed shape and edge-route fields.
 func Layout(input *Graph) error {
-	options, algorithms := defaultRegistries()
-	codec := core.NewCodec(options)
+	options, _ := sharedRegistries()
+	// The codec and the model's arenas are reused by later calls (see
+	// core.ReleaseCodec); nothing of either is referenced after the call.
+	codec := core.AcquireCodec(options)
 	model, err := codec.Import(input)
 	if err != nil {
+		core.ReleaseCodec(codec, nil)
 		return fmt.Errorf("import ELK graph: %w", err)
 	}
-	if err := core.NewEngine(options, algorithms).Layout(model); err != nil {
+	if err := layoutModel(model); err != nil {
+		core.ReleaseCodec(codec, model)
 		return fmt.Errorf("layout ELK graph: %w", err)
 	}
 	if err := codec.TransferLayout(model); err != nil {
+		core.ReleaseCodec(codec, model)
 		return fmt.Errorf("export ELK layout: %w", err)
 	}
+	core.ReleaseCodec(codec, model)
 	return nil
+}
+
+// layoutModel runs the layout engine on an imported model (for Layout and
+// Request.Layout).
+func layoutModel(model *graph.Model) error {
+	options, algorithms := sharedRegistries()
+	engine := core.Engine{Options: options, Algorithms: algorithms, Monitor: core.NullProgressMonitor}
+	return engine.Layout(model)
 }
 
 // LayoutJSON is the byte-oriented equivalent of Layout.
@@ -60,6 +76,23 @@ func LayoutJSON(input []byte) ([]byte, error) {
 		return nil, fmt.Errorf("encode ELK graph: %w", err)
 	}
 	return output, nil
+}
+
+var (
+	sharedRegistriesOnce sync.Once
+	sharedOptions        *core.OptionRegistry
+	sharedAlgorithms     *core.AlgorithmRegistry
+)
+
+// sharedRegistries returns the default registries, built on first use. Layout
+// only reads them (option and algorithm lookup; every provider instance comes
+// from a fresh Create call), so one copy serves every call, concurrent calls
+// included, with the same results as building them per call.
+func sharedRegistries() (*core.OptionRegistry, *core.AlgorithmRegistry) {
+	sharedRegistriesOnce.Do(func() {
+		sharedOptions, sharedAlgorithms = defaultRegistries()
+	})
+	return sharedOptions, sharedAlgorithms
 }
 
 // defaultRegistries is the single integration point for native providers.

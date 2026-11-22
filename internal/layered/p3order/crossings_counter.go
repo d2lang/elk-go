@@ -11,13 +11,16 @@ package p3order
 import (
 	"sort"
 
+	basegraph "github.com/d2lang/elk-go/internal/graph"
 	"github.com/d2lang/elk-go/internal/layered"
 )
 
-const (
-	inLayerLayoutUnitPropertyID = "inLayerLayoutUnit"
-	portDummyPropertyID         = "portDummy"
-	originPropertyID            = "origin"
+// Raw keys of the properties read without a type check: their stored value
+// may be an ID or a pointer to one.
+var (
+	inLayerLayoutUnitKey = layered.InLayerLayoutUnit.Key()
+	portDummyKey         = layered.PortDummy.Key()
+	originKey            = layered.OriginalElement.Key()
 )
 
 // CrossingsCounter is the exact ELK 0.8.1 reduction of between-layer,
@@ -25,22 +28,62 @@ const (
 // scratch indices into PortPositions; AllCrossingsCounter assigns them in
 // Java traversal order.
 type CrossingsCounter struct {
-	PortPositions     []int
-	indexTree         *binaryIndexedTree
-	ends              []int
-	nodeCardinalities []int
+	PortPositions []int
+	indexTree     *binaryIndexedTree
+
+	// scratch holds the counter's reused buffers and its tree's storage:
+	// its own, or the workspace's shared ones (every count empties or
+	// resets what it uses, and counts never nest).
+	scratch *countScratch
+
+	table *portTable // ports and edges, if the minimizer built a table
+}
+
+// portIndex is arena.Port(portID).ID.
+func (counter *CrossingsCounter) portIndex(arena *layered.LGraphArena, portID layered.LPortID) int {
+	if table := counter.table; table != nil {
+		return int(table.ports[portID].id)
+	}
+	return arena.Port(portID).ID
+}
+
+// countScratch is a crossings counter's working storage. ports is the
+// reused result buffer of the position initializers (every caller consumes
+// it before the next initialization); ends is empty between ports.
+type countScratch struct {
+	ports         []layered.LPortID
+	ends          []int
+	cardinalities []int
+	tree          binaryIndexedTree
+}
+
+// resetIndexTree gives the counter an empty tree for values in [0,maxNum),
+// the state newBinaryIndexedTree(maxNum) returns, in its scratch storage.
+func (counter *CrossingsCounter) resetIndexTree(maxNum int) {
+	if counter.indexTree == nil {
+		counter.indexTree = &counter.scratch.tree
+	}
+	counter.indexTree.reset(maxNum)
 }
 
 func NewCrossingsCounter(portPositions []int) *CrossingsCounter {
-	return &CrossingsCounter{PortPositions: portPositions}
+	return &CrossingsCounter{PortPositions: portPositions, scratch: &countScratch{}}
 }
 
 func (counter *CrossingsCounter) CountCrossingsBetweenLayers(
 	arena *layered.LGraphArena,
 	leftLayerNodes, rightLayerNodes []layered.LNodeID,
 ) int {
+	if table := counter.table; table != nil {
+		ports := counter.scratch.ports[:0]
+		ports = counter.initPositionsFromTable(arena, table, leftLayerNodes, ports, layered.EastSide, true, false)
+		ports = counter.initPositionsFromTable(arena, table, rightLayerNodes, ports, layered.WestSide, false, false)
+		counter.scratch.ports = ports
+		counter.resetIndexTree(len(ports))
+		return counter.countCrossingsOnPortsFromTable(table, ports)
+	}
 	ports := counter.initPortPositionsCounterClockwise(arena, leftLayerNodes, rightLayerNodes)
-	counter.indexTree = newBinaryIndexedTree(len(ports))
+	counter.resetIndexTree(len(ports))
 	return counter.countCrossingsOnPorts(arena, ports)
 }
 
@@ -49,8 +92,129 @@ func (counter *CrossingsCounter) CountInLayerCrossingsOnSide(
 	nodes []layered.LNodeID,
 	side layered.PortSide,
 ) int {
+	if table := counter.table; table != nil {
+		ports := counter.initPositionsFromTable(arena, table, nodes, counter.scratch.ports[:0], side, true, true)
+		counter.scratch.ports = ports
+		counter.resetIndexTree(len(ports))
+		return counter.countInLayerCrossingsOnPortsFromTable(table, ports)
+	}
 	ports := counter.InitPortPositionsForInLayerCrossings(arena, nodes, side)
 	return counter.countInLayerCrossingsOnPorts(arena, ports)
+}
+
+// initPositionsFromTable is initPositions with the ports' scratch IDs read
+// from the table and the position list kept in a local slice (appended to
+// ports and returned).
+func (counter *CrossingsCounter) initPositionsFromTable(
+	arena *layered.LGraphArena,
+	table *portTable,
+	nodes []layered.LNodeID,
+	ports []layered.LPortID,
+	side layered.PortSide,
+	topDown, getCardinalities bool,
+) []layered.LPortID {
+	numPorts := len(ports)
+	positions := counter.PortPositions
+	entries := table.ports
+	var cardinalities []int
+	if getCardinalities {
+		cardinalities = zeroedInts(counter.scratch.cardinalities, len(nodes))
+		counter.scratch.cardinalities = cardinalities
+	}
+	start, end, step := 0, len(nodes), 1
+	if !topDown {
+		start, end, step = len(nodes)-1, -1, -1
+	}
+	// portsForDirection's order: the side view, reversed for EAST bottom-up
+	// and for the other sides top-down.
+	reverse := side == layered.EastSide && !topDown || side != layered.EastSide && topDown
+	for index := start; index != end; index += step {
+		nodeID := nodes[index]
+		view := arena.NodePortSideView(nodeID, side)
+		if getCardinalities {
+			cardinalities[arena.Node(nodeID).ID] = len(view)
+		}
+		if reverse {
+			for portIndex := len(view) - 1; portIndex >= 0; portIndex-- {
+				portID := view[portIndex]
+				positions[entries[portID].id] = numPorts
+				numPorts++
+				ports = append(ports, portID)
+			}
+		} else {
+			for _, portID := range view {
+				positions[entries[portID].id] = numPorts
+				numPorts++
+				ports = append(ports, portID)
+			}
+		}
+	}
+	return ports
+}
+
+// countCrossingsOnPortsFromTable is countCrossingsOnPorts' table branch with
+// the tree and the pending ends in local variables: the same tree
+// operations in the same order.
+func (counter *CrossingsCounter) countCrossingsOnPortsFromTable(table *portTable, ports []layered.LPortID) int {
+	crossings := 0
+	positions := counter.PortPositions
+	tree := counter.indexTree
+	pending := counter.scratch.ends
+	for _, portID := range ports {
+		entry := &table.ports[portID]
+		position := positions[entry.id]
+		tree.removeAll(position)
+		ends := table.connected(entry)
+		for index := range ends {
+			endPosition := positions[ends[index].otherID]
+			if endPosition > position {
+				crossings += tree.rank(endPosition)
+				pending = append(pending, endPosition)
+			}
+		}
+		for len(pending) > 0 {
+			last := len(pending) - 1
+			tree.add(pending[last])
+			pending = pending[:last]
+		}
+	}
+	counter.scratch.ends = pending
+	return crossings
+}
+
+// countInLayerCrossingsOnPortsFromTable is countInLayerCrossingsOnPorts'
+// table branch with local variables (see countCrossingsOnPortsFromTable).
+func (counter *CrossingsCounter) countInLayerCrossingsOnPortsFromTable(table *portTable, ports []layered.LPortID) int {
+	crossings := 0
+	positions := counter.PortPositions
+	tree := counter.indexTree
+	pending := counter.scratch.ends
+	for _, portID := range ports {
+		entry := &table.ports[portID]
+		position := positions[entry.id]
+		tree.removeAll(position)
+		betweenLayerEdges := 0
+		ends := table.connected(entry)
+		for index := range ends {
+			if ends[index].inLayer {
+				endPosition := positions[ends[index].otherID]
+				if endPosition > position {
+					crossings += tree.rank(endPosition)
+					pending = append(pending, endPosition)
+				}
+			} else {
+				betweenLayerEdges++
+			}
+		}
+		crossings += tree.size * betweenLayerEdges
+		for len(pending) > 0 {
+			last := len(pending) - 1
+			tree.add(pending[last])
+			pending = pending[:last]
+		}
+	}
+	counter.scratch.ends = pending
+	return crossings
 }
 
 func (counter *CrossingsCounter) CountNorthSouthPortCrossingsInLayer(
@@ -58,7 +222,7 @@ func (counter *CrossingsCounter) CountNorthSouthPortCrossingsInLayer(
 	nodes []layered.LNodeID,
 ) int {
 	ports := counter.initPositionsForNorthSouthCounting(arena, nodes)
-	counter.indexTree = newBinaryIndexedTree(len(ports))
+	counter.resetIndexTree(len(ports))
 	return counter.countNorthSouthCrossingsOnPorts(arena, ports)
 }
 
@@ -102,7 +266,7 @@ func (counter *CrossingsCounter) InitForCountingBetween(
 	leftLayerNodes, rightLayerNodes []layered.LNodeID,
 ) {
 	ports := counter.initPortPositionsCounterClockwise(arena, leftLayerNodes, rightLayerNodes)
-	counter.indexTree = newBinaryIndexedTree(len(ports))
+	counter.resetIndexTree(len(ports))
 }
 
 func (counter *CrossingsCounter) InitPortPositionsForInLayerCrossings(
@@ -110,9 +274,10 @@ func (counter *CrossingsCounter) InitPortPositionsForInLayerCrossings(
 	nodes []layered.LNodeID,
 	side layered.PortSide,
 ) []layered.LPortID {
-	ports := make([]layered.LPortID, 0)
+	ports := counter.scratch.ports[:0]
 	counter.initPositions(arena, nodes, &ports, side, true, true)
-	counter.indexTree = newBinaryIndexedTree(len(ports))
+	counter.scratch.ports = ports
+	counter.resetIndexTree(len(ports))
 	return ports
 }
 
@@ -132,11 +297,11 @@ func (counter *CrossingsCounter) SwitchNodes(
 ) {
 	for _, portID := range portsInNorthSouthEastWestOrder(arena, wasUpperNode, side) {
 		portIndex := arena.Port(portID).ID
-		counter.PortPositions[portIndex] += counter.nodeCardinalities[arena.Node(wasLowerNode).ID]
+		counter.PortPositions[portIndex] += counter.scratch.cardinalities[arena.Node(wasLowerNode).ID]
 	}
 	for _, portID := range portsInNorthSouthEastWestOrder(arena, wasLowerNode, side) {
 		portIndex := arena.Port(portID).ID
-		counter.PortPositions[portIndex] -= counter.nodeCardinalities[arena.Node(wasUpperNode).ID]
+		counter.PortPositions[portIndex] -= counter.scratch.cardinalities[arena.Node(wasUpperNode).ID]
 	}
 }
 
@@ -200,15 +365,38 @@ func (counter *CrossingsCounter) countCrossingsOnPorts(
 	ports []layered.LPortID,
 ) int {
 	crossings := 0
+	if table := counter.table; table != nil {
+		// The edges' other ends as EdgeOtherPort returns them, incoming
+		// edges first (PortConnectedEdges' order).
+		positions := counter.PortPositions
+		for _, portID := range ports {
+			entry := &table.ports[portID]
+			position := positions[entry.id]
+			counter.indexTree.removeAll(position)
+			for _, end := range table.connected(entry) {
+				endPosition := positions[end.otherID]
+				if endPosition > position {
+					crossings += counter.indexTree.rank(endPosition)
+					counter.scratch.ends = append(counter.scratch.ends, endPosition)
+				}
+			}
+			counter.addEnds()
+		}
+		return crossings
+	}
 	for _, portID := range ports {
 		position := counter.positionOf(arena, portID)
 		counter.indexTree.removeAll(position)
-		for _, edgeID := range arena.PortConnectedEdges(portID) {
-			other := arena.EdgeOtherPort(edgeID, portID)
-			endPosition := counter.positionOf(arena, other)
-			if endPosition > position {
-				crossings += counter.indexTree.rank(endPosition)
-				counter.ends = append(counter.ends, endPosition)
+		// PortConnectedEdges order: incoming, then outgoing.
+		port := arena.Port(portID)
+		for _, edges := range [2][]layered.LEdgeID{port.IncomingEdges, port.OutgoingEdges} {
+			for _, edgeID := range edges {
+				other := arena.EdgeOtherPort(edgeID, portID)
+				endPosition := counter.positionOf(arena, other)
+				if endPosition > position {
+					crossings += counter.indexTree.rank(endPosition)
+					counter.scratch.ends = append(counter.scratch.ends, endPosition)
+				}
 			}
 		}
 		counter.addEnds()
@@ -221,19 +409,45 @@ func (counter *CrossingsCounter) countInLayerCrossingsOnPorts(
 	ports []layered.LPortID,
 ) int {
 	crossings := 0
+	if table := counter.table; table != nil {
+		positions := counter.PortPositions
+		for _, portID := range ports {
+			entry := &table.ports[portID]
+			position := positions[entry.id]
+			counter.indexTree.removeAll(position)
+			betweenLayerEdges := 0
+			for _, end := range table.connected(entry) {
+				if end.inLayer {
+					endPosition := positions[end.otherID]
+					if endPosition > position {
+						crossings += counter.indexTree.rank(endPosition)
+						counter.scratch.ends = append(counter.scratch.ends, endPosition)
+					}
+				} else {
+					betweenLayerEdges++
+				}
+			}
+			crossings += counter.indexTree.size * betweenLayerEdges
+			counter.addEnds()
+		}
+		return crossings
+	}
 	for _, portID := range ports {
 		position := counter.positionOf(arena, portID)
 		counter.indexTree.removeAll(position)
 		betweenLayerEdges := 0
-		for _, edgeID := range arena.PortConnectedEdges(portID) {
-			if arena.EdgeIsInLayer(edgeID) {
-				endPosition := counter.positionOf(arena, arena.EdgeOtherPort(edgeID, portID))
-				if endPosition > position {
-					crossings += counter.indexTree.rank(endPosition)
-					counter.ends = append(counter.ends, endPosition)
+		port := arena.Port(portID)
+		for _, edges := range [2][]layered.LEdgeID{port.IncomingEdges, port.OutgoingEdges} {
+			for _, edgeID := range edges {
+				if arena.EdgeIsInLayer(edgeID) {
+					endPosition := counter.positionOf(arena, arena.EdgeOtherPort(edgeID, portID))
+					if endPosition > position {
+						crossings += counter.indexTree.rank(endPosition)
+						counter.scratch.ends = append(counter.scratch.ends, endPosition)
+					}
+				} else {
+					betweenLayerEdges++
 				}
-			} else {
-				betweenLayerEdges++
 			}
 		}
 		crossings += counter.indexTree.size * betweenLayerEdges
@@ -258,21 +472,21 @@ func (counter *CrossingsCounter) countNorthSouthCrossingsOnPorts(
 		nodeID := *arena.Port(portID).Node
 		switch arena.Node(nodeID).Type {
 		case layered.NormalNode:
-			if dummyID, ok := rawNodeID(&arena.Port(portID).Properties, portDummyPropertyID); ok {
+			if dummyID, ok := rawNodeID(&arena.Port(portID).Properties, portDummyKey); ok {
 				for _, targetID := range arena.Node(dummyID).Ports {
-					targets = append(targets, targetAndDegree{targetID, len(arena.PortConnectedEdges(targetID))})
+					targets = append(targets, targetAndDegree{targetID, portDegree(arena, targetID)})
 				}
 			}
 		case layered.LongEdgeNode:
 			for _, targetID := range arena.Node(nodeID).Ports {
 				if targetID != portID {
-					targets = append(targets, targetAndDegree{targetID, len(arena.PortConnectedEdges(targetID))})
+					targets = append(targets, targetAndDegree{targetID, portDegree(arena, targetID)})
 					break
 				}
 			}
 		case layered.NorthSouthPortNode:
-			if originID, ok := rawPortID(&arena.Port(portID).Properties, originPropertyID); ok {
-				targets = append(targets, targetAndDegree{originID, len(arena.PortConnectedEdges(portID))})
+			if originID, ok := rawPortID(&arena.Port(portID).Properties, originKey); ok {
+				targets = append(targets, targetAndDegree{originID, portDegree(arena, portID)})
 			}
 		}
 
@@ -280,7 +494,7 @@ func (counter *CrossingsCounter) countNorthSouthCrossingsOnPorts(
 			endPosition := counter.positionOf(arena, target.port)
 			if endPosition > position {
 				crossings += counter.indexTree.rank(endPosition) * target.degree
-				counter.ends = append(counter.ends, endPosition)
+				counter.scratch.ends = append(counter.scratch.ends, endPosition)
 			}
 		}
 		counter.addEnds()
@@ -289,10 +503,10 @@ func (counter *CrossingsCounter) countNorthSouthCrossingsOnPorts(
 }
 
 func (counter *CrossingsCounter) addEnds() {
-	for len(counter.ends) > 0 {
-		last := len(counter.ends) - 1
-		counter.indexTree.add(counter.ends[last])
-		counter.ends = counter.ends[:last]
+	for len(counter.scratch.ends) > 0 {
+		last := len(counter.scratch.ends) - 1
+		counter.indexTree.add(counter.scratch.ends[last])
+		counter.scratch.ends = counter.scratch.ends[:last]
 	}
 }
 
@@ -305,23 +519,35 @@ func (counter *CrossingsCounter) initPositions(
 ) {
 	numPorts := len(*ports)
 	if getCardinalities {
-		counter.nodeCardinalities = make([]int, len(nodes))
+		counter.scratch.cardinalities = zeroedInts(counter.scratch.cardinalities, len(nodes))
 	}
 	start, end, step := 0, len(nodes), 1
 	if !topDown {
 		start, end, step = len(nodes)-1, -1, -1
 	}
+	// portsForDirection's order: the side view, reversed for EAST bottom-up
+	// and for the other sides top-down.
+	reverse := side == layered.EastSide && !topDown || side != layered.EastSide && topDown
 	for index := start; index != end; index += step {
 		nodeID := nodes[index]
-		nodePorts := counter.portsForDirection(arena, nodeID, side, topDown)
+		view := arena.NodePortSideView(nodeID, side)
 		if getCardinalities {
-			counter.nodeCardinalities[arena.Node(nodeID).ID] = len(nodePorts)
+			counter.scratch.cardinalities[arena.Node(nodeID).ID] = len(view)
 		}
-		for _, portID := range nodePorts {
-			counter.PortPositions[arena.Port(portID).ID] = numPorts
-			numPorts++
+		if reverse {
+			for portIndex := len(view) - 1; portIndex >= 0; portIndex-- {
+				portID := view[portIndex]
+				counter.PortPositions[counter.portIndex(arena, portID)] = numPorts
+				numPorts++
+				*ports = append(*ports, portID)
+			}
+		} else {
+			for _, portID := range view {
+				counter.PortPositions[counter.portIndex(arena, portID)] = numPorts
+				numPorts++
+				*ports = append(*ports, portID)
+			}
 		}
-		*ports = append(*ports, nodePorts...)
 	}
 }
 
@@ -329,9 +555,10 @@ func (counter *CrossingsCounter) initPortPositionsCounterClockwise(
 	arena *layered.LGraphArena,
 	leftLayerNodes, rightLayerNodes []layered.LNodeID,
 ) []layered.LPortID {
-	ports := make([]layered.LPortID, 0)
+	ports := counter.scratch.ports[:0]
 	counter.initPositions(arena, leftLayerNodes, &ports, layered.EastSide, true, false)
 	counter.initPositions(arena, rightLayerNodes, &ports, layered.WestSide, false, false)
+	counter.scratch.ports = ports
 	return ports
 }
 
@@ -347,7 +574,7 @@ func (counter *CrossingsCounter) initPositionsForNorthSouthCounting(
 		if layoutUnitChanged(arena, lastLayoutUnit, current) {
 			index = counter.emptyStack(arena, &stack, &ports, layered.EastSide, index)
 		}
-		if unit, ok := rawNodeID(&arena.Node(current).Properties, inLayerLayoutUnitPropertyID); ok {
+		if unit, ok := rawNodeID(&arena.Node(current).Properties, inLayerLayoutUnitKey); ok {
 			unitCopy := unit
 			lastLayoutUnit = &unitCopy
 		}
@@ -355,20 +582,20 @@ func (counter *CrossingsCounter) initPositionsForNorthSouthCounting(
 		switch arena.Node(current).Type {
 		case layered.NormalNode:
 			for _, portID := range portsWithDummy(arena, current, layered.NorthSide) {
-				counter.PortPositions[arena.Port(portID).ID] = index
+				counter.PortPositions[counter.portIndex(arena, portID)] = index
 				index++
 				ports = append(ports, portID)
 			}
 			index = counter.emptyStack(arena, &stack, &ports, layered.EastSide, index)
 			for _, portID := range portsWithDummy(arena, current, layered.SouthSide) {
-				counter.PortPositions[arena.Port(portID).ID] = index
+				counter.PortPositions[counter.portIndex(arena, portID)] = index
 				index++
 				ports = append(ports, portID)
 			}
 		case layered.NorthSouthPortNode:
 			if view := arena.NodePortSideView(current, layered.WestSide); len(view) > 0 {
 				portID := view[0]
-				counter.PortPositions[arena.Port(portID).ID] = index
+				counter.PortPositions[counter.portIndex(arena, portID)] = index
 				index++
 				ports = append(ports, portID)
 			}
@@ -377,7 +604,7 @@ func (counter *CrossingsCounter) initPositionsForNorthSouthCounting(
 			}
 		case layered.LongEdgeNode:
 			for _, portID := range arena.NodePortSideView(current, layered.WestSide) {
-				counter.PortPositions[arena.Port(portID).ID] = index
+				counter.PortPositions[counter.portIndex(arena, portID)] = index
 				index++
 				ports = append(ports, portID)
 			}
@@ -402,33 +629,15 @@ func (counter *CrossingsCounter) emptyStack(
 		dummyID := (*stack)[last]
 		*stack = (*stack)[:last]
 		portID := arena.NodePortSideView(dummyID, side)[0]
-		counter.PortPositions[arena.Port(portID).ID] = index
+		counter.PortPositions[counter.portIndex(arena, portID)] = index
 		index++
 		*ports = append(*ports, portID)
 	}
 	return index
 }
 
-func (counter *CrossingsCounter) portsForDirection(
-	arena *layered.LGraphArena,
-	nodeID layered.LNodeID,
-	side layered.PortSide,
-	topDown bool,
-) []layered.LPortID {
-	ports := arena.NodePortSideView(nodeID, side)
-	reverse := side == layered.EastSide && !topDown || side != layered.EastSide && topDown
-	if !reverse {
-		return ports
-	}
-	result := append([]layered.LPortID(nil), ports...)
-	for left, right := 0, len(result)-1; left < right; left, right = left+1, right-1 {
-		result[left], result[right] = result[right], result[left]
-	}
-	return result
-}
-
 func (counter *CrossingsCounter) positionOf(arena *layered.LGraphArena, portID layered.LPortID) int {
-	return counter.PortPositions[arena.Port(portID).ID]
+	return counter.PortPositions[counter.portIndex(arena, portID)]
 }
 
 func portsWithDummy(
@@ -438,7 +647,7 @@ func portsWithDummy(
 ) []layered.LPortID {
 	result := make([]layered.LPortID, 0)
 	for _, portID := range arena.NodePortSideView(nodeID, side) {
-		if arena.Port(portID).Properties.Has(portDummyPropertyID) {
+		if arena.Port(portID).Properties.HasKey(portDummyKey) {
 			result = append(result, portID)
 		}
 	}
@@ -450,19 +659,33 @@ func layoutUnitChanged(
 	lastUnit *layered.LNodeID,
 	nodeID layered.LNodeID,
 ) bool {
-	if lastUnit == nil || *lastUnit == nodeID || !arena.Node(nodeID).Properties.Has(inLayerLayoutUnitPropertyID) {
+	if lastUnit == nil || *lastUnit == nodeID || !arena.Node(nodeID).Properties.HasKey(inLayerLayoutUnitKey) {
 		return false
 	}
-	unit, ok := rawNodeID(&arena.Node(nodeID).Properties, inLayerLayoutUnitPropertyID)
+	unit, ok := rawNodeID(&arena.Node(nodeID).Properties, inLayerLayoutUnitKey)
 	return ok && unit != *lastUnit
 }
 
-type rawPropertyMap interface {
-	Raw(string) (any, bool)
+// portDegree is len(arena.PortConnectedEdges(portID)) without the copy.
+func portDegree(arena *layered.LGraphArena, portID layered.LPortID) int {
+	port := arena.Port(portID)
+	return len(port.IncomingEdges) + len(port.OutgoingEdges)
 }
 
-func rawNodeID(properties rawPropertyMap, id string) (layered.LNodeID, bool) {
-	value, ok := properties.Raw(id)
+// zeroedInts returns a zeroed slice of length n, reusing buffer's storage.
+func zeroedInts(buffer []int, n int) []int {
+	if cap(buffer) < n {
+		return make([]int, n)
+	}
+	buffer = buffer[:n]
+	for index := range buffer {
+		buffer[index] = 0
+	}
+	return buffer
+}
+
+func rawNodeID(properties *basegraph.PropertyMap, key basegraph.PropertyKey) (layered.LNodeID, bool) {
+	value, ok := properties.RawKey(key)
 	if !ok {
 		return 0, false
 	}
@@ -479,8 +702,8 @@ func rawNodeID(properties rawPropertyMap, id string) (layered.LNodeID, bool) {
 	}
 }
 
-func rawPortID(properties rawPropertyMap, id string) (layered.LPortID, bool) {
-	value, ok := properties.Raw(id)
+func rawPortID(properties *basegraph.PropertyMap, key basegraph.PropertyKey) (layered.LPortID, bool) {
+	value, ok := properties.RawKey(key)
 	if !ok {
 		return 0, false
 	}

@@ -71,13 +71,32 @@ func ProcessLayerConstraintsAfterLayering(
 	return (&LayerConstraintPostprocessor{}).Process(arena, graphID)
 }
 
+// layerConstraintScratch holds the snapshots of
+// moveFirstAndLastLayerConstraintNodes (layered.ScratchLayerConstraints).
+type layerConstraintScratch struct {
+	layers []layered.LayerID
+	nodes  []layered.LNodeID
+}
+
 func moveFirstAndLastLayerConstraintNodes(
 	arena *layered.LGraphArena,
 	graphID layered.LGraphID,
 	firstLayer, lastLayer, firstLabelLayer, lastLabelLayer layered.LayerID,
 ) error {
-	for _, layerID := range append([]layered.LayerID(nil), arena.Graph(graphID).Layers...) {
-		for _, nodeID := range append([]layered.LNodeID(nil), arena.Layer(layerID).Nodes...) {
+	// The layer list and each layer's node list are walked as snapshots
+	// (taken when the walk reaches them, as before) in buffers kept in the
+	// arena; nothing called here takes snapshots into them.
+	scratch, _ := arena.Scratch(layered.ScratchLayerConstraints).(*layerConstraintScratch)
+	if scratch == nil {
+		scratch = &layerConstraintScratch{}
+		arena.SetScratch(layered.ScratchLayerConstraints, scratch)
+	}
+	layers := append(scratch.layers[:0], arena.Graph(graphID).Layers...)
+	scratch.layers = layers
+	for _, layerID := range layers {
+		nodes := append(scratch.nodes[:0], arena.Layer(layerID).Nodes...)
+		scratch.nodes = nodes
+		for _, nodeID := range nodes {
 			switch basegraph.Get(&arena.Node(nodeID).Properties, layered.LayerConstraintOption) {
 			case layered.LayerConstraintFirst:
 				if err := ensureNoIncomingLayerConstraintEdges(arena, nodeID); err != nil {
@@ -110,11 +129,13 @@ func moveAdjacentLabelDummies(
 	incoming bool,
 	labelLayer layered.LayerID,
 ) {
+	// NodeOutgoingEdges / NodeIncomingEdges build a new list, which nothing
+	// else refers to: walking it is walking a copy of it.
 	edges := arena.NodeOutgoingEdges(nodeID)
 	if incoming {
 		edges = arena.NodeIncomingEdges(nodeID)
 	}
-	for _, edgeID := range append([]layered.LEdgeID(nil), edges...) {
+	for _, edgeID := range edges {
 		edge := arena.Edge(edgeID)
 		if edge.Source == nil || edge.Target == nil {
 			continue

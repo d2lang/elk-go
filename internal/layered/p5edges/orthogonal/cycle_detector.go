@@ -10,7 +10,6 @@ package orthogonal
 
 import (
 	"math"
-	"sort"
 
 	"github.com/d2lang/elk-go/internal/javacompat"
 )
@@ -18,13 +17,31 @@ import (
 // DetectCycles ports HyperEdgeCycleDetector.detectCycles. When criticalOnly
 // is false, critical arcs are still protected from reversal.
 func DetectCycles(segments []*HyperEdgeSegment, criticalOnly bool, random *javacompat.Random) []*HyperEdgeSegmentDependency {
+	return detectCycles(segments, criticalOnly, random, &cycleScratch{})
+}
+
+// cycleScratch is the working storage of detectCycles; a generator keeps one
+// for its RouteEdges calls. Every list is emptied before it is filled.
+type cycleScratch struct {
+	sources, sinks, order, maximum []*HyperEdgeSegment
+	result                         []*HyperEdgeSegmentDependency
+}
+
+// detectCycles is DetectCycles with its lists in scratch; the result is
+// valid until scratch is used again.
+func detectCycles(
+	segments []*HyperEdgeSegment,
+	criticalOnly bool,
+	random *javacompat.Random,
+	scratch *cycleScratch,
+) []*HyperEdgeSegmentDependency {
 	if random == nil {
 		random = javacompat.NewRandom(1)
 	}
-	sources, sinks := initializeCycleDetector(segments, criticalOnly)
-	computeLinearOrderingMarks(segments, sources, sinks, criticalOnly, random)
+	sources, sinks := initializeCycleDetector(segments, criticalOnly, scratch.sources[:0], scratch.sinks[:0])
+	computeLinearOrderingMarks(segments, sources, sinks, criticalOnly, random, scratch)
 
-	result := make([]*HyperEdgeSegmentDependency, 0)
+	result := scratch.result[:0]
 	for _, source := range segments {
 		for _, dependency := range source.OutgoingDependencies {
 			if (!criticalOnly || dependency.Type == CriticalDependency) && source.Mark > dependency.Target.Mark {
@@ -32,10 +49,15 @@ func DetectCycles(segments []*HyperEdgeSegment, criticalOnly bool, random *javac
 			}
 		}
 	}
+	scratch.result = result
 	return result
 }
 
-func initializeCycleDetector(segments []*HyperEdgeSegment, criticalOnly bool) (sources, sinks []*HyperEdgeSegment) {
+func initializeCycleDetector(
+	segments []*HyperEdgeSegment,
+	criticalOnly bool,
+	sources, sinks []*HyperEdgeSegment,
+) ([]*HyperEdgeSegment, []*HyperEdgeSegment) {
 	nextMark := -1
 	for _, segment := range segments {
 		segment.Mark = nextMark
@@ -75,47 +97,62 @@ func computeLinearOrderingMarks(
 	segments, sources, sinks []*HyperEdgeSegment,
 	criticalOnly bool,
 	random *javacompat.Random,
+	scratch *cycleScratch,
 ) {
+	// The source and sink queues are walked by head index (the order of
+	// taking the first element each time); they and the other lists are
+	// handed back to scratch for the next call.
+	sourceHead, sinkHead := 0, 0
 	// TreeSet orders the initial negative marks, so its stable iteration order
 	// is the reverse of the input list. Mutating marks does not rebalance Java's
 	// tree; we likewise retain this frozen order.
-	unprocessedOrder := append([]*HyperEdgeSegment(nil), segments...)
-	sort.SliceStable(unprocessedOrder, func(i, j int) bool { return unprocessedOrder[i].Mark < unprocessedOrder[j].Mark })
-	unprocessed := make(map[*HyperEdgeSegment]bool, len(segments))
+	unprocessedOrder := append(scratch.order[:0], segments...)
+	// GoStableSort is sort.SliceStable without reflection (same comparisons,
+	// same permutation).
+	javacompat.GoStableSort(unprocessedOrder, func(first, second *HyperEdgeSegment) bool { return first.Mark < second.Mark })
+	// The set of unprocessed segments is a flag on each segment plus a count
+	// (membership tests and removals only).
+	unprocessed := 0
 	for _, segment := range segments {
-		unprocessed[segment] = true
+		if !segment.unprocessed {
+			segment.unprocessed = true
+			unprocessed++
+		}
 	}
 	markBase := len(segments)
 	nextSinkMark, nextSourceMark := markBase-1, markBase+1
 
-	for len(unprocessed) > 0 {
-		for len(sinks) > 0 {
-			sink := sinks[0]
-			sinks = sinks[1:]
-			if !unprocessed[sink] {
+	maxSegments := scratch.maximum[:0]
+	for unprocessed > 0 {
+		for sinkHead < len(sinks) {
+			sink := sinks[sinkHead]
+			sinkHead++
+			if !sink.unprocessed {
 				continue
 			}
-			delete(unprocessed, sink)
+			sink.unprocessed = false
+			unprocessed--
 			sink.Mark = nextSinkMark
 			nextSinkMark--
 			sources, sinks = updateNeighbors(sink, sources, sinks, criticalOnly)
 		}
-		for len(sources) > 0 {
-			source := sources[0]
-			sources = sources[1:]
-			if !unprocessed[source] {
+		for sourceHead < len(sources) {
+			source := sources[sourceHead]
+			sourceHead++
+			if !source.unprocessed {
 				continue
 			}
-			delete(unprocessed, source)
+			source.unprocessed = false
+			unprocessed--
 			source.Mark = nextSourceMark
 			nextSourceMark++
 			sources, sinks = updateNeighbors(source, sources, sinks, criticalOnly)
 		}
 
 		maxOutflow := math.MinInt
-		maxSegments := make([]*HyperEdgeSegment, 0)
+		maxSegments = maxSegments[:0]
 		for _, segment := range unprocessedOrder {
-			if !unprocessed[segment] {
+			if !segment.unprocessed {
 				continue
 			}
 			if !criticalOnly && segment.CriticalOutWeight > 0 && segment.CriticalInWeight <= 0 {
@@ -133,7 +170,10 @@ func computeLinearOrderingMarks(
 		}
 		if len(maxSegments) > 0 {
 			selected := maxSegments[random.NextIntN(int32(len(maxSegments)))]
-			delete(unprocessed, selected)
+			if selected.unprocessed {
+				selected.unprocessed = false
+				unprocessed--
+			}
 			selected.Mark = nextSourceMark
 			nextSourceMark++
 			sources, sinks = updateNeighbors(selected, sources, sinks, criticalOnly)
@@ -146,6 +186,8 @@ func computeLinearOrderingMarks(
 			segment.Mark += shiftBase
 		}
 	}
+	scratch.sources, scratch.sinks = sources[:0], sinks[:0]
+	scratch.order, scratch.maximum = unprocessedOrder[:0], maxSegments[:0]
 }
 
 func updateNeighbors(
@@ -189,7 +231,13 @@ func updateNeighbors(
 // BreakNonCriticalCycles removes zero-weight two-cycle arcs and reverses all
 // other feedback arcs selected by ELK's cycle detector.
 func BreakNonCriticalCycles(segments []*HyperEdgeSegment, random *javacompat.Random) {
-	for _, dependency := range DetectCycles(segments, false, random) {
+	breakNonCriticalCycles(segments, random, &cycleScratch{})
+}
+
+// breakNonCriticalCycles is BreakNonCriticalCycles with the detector's lists
+// in scratch (removing or reversing a dependency changes no list of it).
+func breakNonCriticalCycles(segments []*HyperEdgeSegment, random *javacompat.Random, scratch *cycleScratch) {
+	for _, dependency := range detectCycles(segments, false, random, scratch) {
 		if dependency.Weight == 0 {
 			dependency.Remove()
 		} else {

@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+
+	"github.com/d2lang/elk-go/internal/jsonorder"
 )
 
 // ID is an ELK graph identifier. ELK's documented API uses string IDs, while
@@ -211,6 +213,76 @@ func (edge *Edge) LayoutOptionKeys() []string { return cloneStrings(edge.layoutO
 // decoding JSON. Programmatically constructed sections return nil.
 func (section *EdgeSection) LayoutOptionKeys() []string {
 	return cloneStrings(section.layoutOptionOrder)
+}
+
+// SetLayoutOptionKeys records keys as the member order of LayoutOptions, which
+// is the order in which layout applies the options, as decoding JSON does
+// (LayoutOptionKeys reports it). Keys missing from LayoutOptions are skipped
+// and a repeated key counts once; options that are not listed are applied
+// after the listed ones in sorted key order. A nil order (the default for
+// programmatically constructed nodes) applies the options in canonical
+// option order instead. keys is retained, not copied, so elements may share
+// one slice; it must not be modified afterwards.
+func (node *Node) SetLayoutOptionKeys(keys []string) { node.layoutOptionOrder = keys }
+
+// SetIndividualSpacingKeys records the member order of IndividualSpacings, as
+// SetLayoutOptionKeys does for LayoutOptions.
+func (node *Node) SetIndividualSpacingKeys(keys []string) { node.individualOrder = keys }
+
+// SetLayoutOptionKeys records the member order of LayoutOptions; see
+// Node.SetLayoutOptionKeys.
+func (port *Port) SetLayoutOptionKeys(keys []string) { port.layoutOptionOrder = keys }
+
+// SetLayoutOptionKeys records the member order of LayoutOptions; see
+// Node.SetLayoutOptionKeys.
+func (label *Label) SetLayoutOptionKeys(keys []string) { label.layoutOptionOrder = keys }
+
+// SetLayoutOptionKeys records the member order of LayoutOptions; see
+// Node.SetLayoutOptionKeys.
+func (edge *Edge) SetLayoutOptionKeys(keys []string) { edge.layoutOptionOrder = keys }
+
+// SetLayoutOptionKeys records the member order of LayoutOptions; see
+// Node.SetLayoutOptionKeys.
+func (section *EdgeSection) SetLayoutOptionKeys(keys []string) {
+	section.layoutOptionOrder = keys
+}
+
+// The jsonorder accessors return what the exported LayoutOptionKeys and
+// IndividualSpacingKeys methods return, without copying: the recorded order,
+// or nil when it is nil or empty (cloneStrings returns nil for both, and the
+// importer sorts unlisted keys differently for a nil order).
+func init() {
+	jsonorder.LayoutOptionKeys = func(element any) []string {
+		var order []string
+		switch typed := element.(type) {
+		case *Node:
+			order = typed.layoutOptionOrder
+		case *Port:
+			order = typed.layoutOptionOrder
+		case *Label:
+			order = typed.layoutOptionOrder
+		case *Edge:
+			order = typed.layoutOptionOrder
+		case *EdgeSection:
+			order = typed.layoutOptionOrder
+		}
+		return sharedOrder(order)
+	}
+	jsonorder.IndividualSpacingKeys = func(node any) []string {
+		if typed, ok := node.(*Node); ok {
+			return sharedOrder(typed.individualOrder)
+		}
+		return nil
+	}
+}
+
+// sharedOrder is order, shared, with an empty order as nil: the nil-ness of
+// cloneStrings(order).
+func sharedOrder(order []string) []string {
+	if len(order) == 0 {
+		return nil
+	}
+	return order
 }
 
 func cloneStrings(values []string) []string {

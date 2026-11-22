@@ -21,11 +21,17 @@ type AllCrossingsCounter struct {
 }
 
 func NewAllCrossingsCounter(numberOfLayers int) *AllCrossingsCounter {
-	return &AllCrossingsCounter{
-		hasHyperEdgesEastOfIndex: make([]bool, numberOfLayers),
-		hasNorthSouthPorts:       make([]bool, numberOfLayers),
-		inLayerEdgeCounts:        make([]int, numberOfLayers),
-	}
+	return newAllCrossingsCounter(nil, numberOfLayers)
+}
+
+// newAllCrossingsCounter is NewAllCrossingsCounter with its storage taken
+// from ws (nil: allocated).
+func newAllCrossingsCounter(ws *crossMinWorkspace, numberOfLayers int) *AllCrossingsCounter {
+	counter := ws.allCounterSlab().one()
+	counter.hasHyperEdgesEastOfIndex = ws.boolSlab().take(numberOfLayers)
+	counter.hasNorthSouthPorts = ws.boolSlab().take(numberOfLayers)
+	counter.inLayerEdgeCounts = ws.intSlab().take(numberOfLayers)
+	return counter
 }
 
 func (counter *AllCrossingsCounter) CountAllCrossings(
@@ -111,7 +117,21 @@ func (counter *AllCrossingsCounter) InitAtEdgeLevel(
 }
 
 func (counter *AllCrossingsCounter) InitAfterTraversal() {
-	counter.crossingCounter = NewCrossingsCounter(make([]int, counter.nPorts))
+	counter.initAfterTraversal(nil)
+}
+
+// initAfterTraversal is InitAfterTraversal with storage from ws (nil:
+// allocated); with a workspace the counter's buffers and tree are the
+// workspace's shared ones.
+func (counter *AllCrossingsCounter) initAfterTraversal(ws *crossMinWorkspace) {
+	if ws == nil {
+		counter.crossingCounter = NewCrossingsCounter(make([]int, counter.nPorts))
+		return
+	}
+	crossings := ws.counterSlab().one()
+	crossings.PortPositions = ws.intSlab().take(counter.nPorts)
+	crossings.scratch = &ws.countScratch
+	counter.crossingCounter = crossings
 }
 
 // InitializeAllCrossingsCounter performs IInitializable.init's exact

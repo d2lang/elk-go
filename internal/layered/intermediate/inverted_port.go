@@ -110,7 +110,7 @@ func newInvertedPortDummy(
 ) (layered.LNodeID, layered.LPortID, layered.LPortID) {
 	dummy := arena.AddNode(graphID)
 	arena.Node(dummy).Type = layered.LongEdgeNode
-	basegraph.Set(&arena.Node(dummy).Properties, layered.OriginalElement, layered.LEdgeOrigin(edgeID))
+	arena.SetOrigin(&arena.Node(dummy).Properties, layered.LEdgeOrigin(edgeID))
 	basegraph.Set(&arena.Node(dummy).Properties, layered.PortConstraintsOption,
 		layered.PortConstraintsFixedPosition)
 	input := arena.AddPort()

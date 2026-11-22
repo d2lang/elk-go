@@ -30,3 +30,14 @@ func TestBinaryIndexedTreeRankAndRemoveAll(t *testing.T) {
 		t.Fatalf("clear left size=%d rank(7)=%d", tree.size, tree.rank(7))
 	}
 }
+
+func newBinaryIndexedTree(maxNum int) *binaryIndexedTree {
+	if maxNum < 0 {
+		panic("p3order: negative binary indexed tree size")
+	}
+	return &binaryIndexedTree{
+		binarySums:   make([]int, maxNum+1),
+		numsPerIndex: make([]int, maxNum),
+		maxNum:       maxNum,
+	}
+}

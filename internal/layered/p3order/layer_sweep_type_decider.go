@@ -34,10 +34,32 @@ func (info *layerSweepNodeInfo) transfer(other layerSweepNodeInfo) {
 // in IInitializable traversal order before UseBottomUp.
 type LayerSweepTypeDecider struct {
 	NodeInfo [][]layerSweepNodeInfo
+
+	// The layers' infos are cut, in layer order, from infoBacking when it
+	// is large enough (each part is handed out once), else made.
+	infoBacking []layerSweepNodeInfo
+	infoUsed    int
+
+	// dummies is UseBottomUp's north/south dummy buffer: the workspace's
+	// shared one (UseBottomUp calls never nest), or nil to allocate.
+	dummies *[]layered.LNodeID
 }
 
 func NewLayerSweepTypeDecider(numberOfLayers int) *LayerSweepTypeDecider {
-	return &LayerSweepTypeDecider{NodeInfo: make([][]layerSweepNodeInfo, numberOfLayers)}
+	return newLayerSweepTypeDecider(nil, numberOfLayers, 0)
+}
+
+// newLayerSweepTypeDecider is NewLayerSweepTypeDecider with its storage,
+// including the infos of totalNodes nodes, taken from ws (nil: allocated
+// per layer).
+func newLayerSweepTypeDecider(ws *crossMinWorkspace, numberOfLayers, totalNodes int) *LayerSweepTypeDecider {
+	decider := ws.deciderSlab().one()
+	decider.NodeInfo = ws.infoListSlab().take(numberOfLayers)
+	if ws != nil {
+		decider.infoBacking = ws.infoSlab().take(totalNodes)
+		decider.dummies = &ws.deciderDummies
+	}
+	return decider
 }
 
 func (decider *LayerSweepTypeDecider) InitAtLayerLevel(
@@ -48,7 +70,13 @@ func (decider *LayerSweepTypeDecider) InitAtLayerLevel(
 	// This deliberately indexes the first node, matching ELK's initializer.
 	layerID := *arena.Node(order[layerIndex][0]).Layer
 	arena.Layer(layerID).ID = layerIndex
-	decider.NodeInfo[layerIndex] = make([]layerSweepNodeInfo, len(order[layerIndex]))
+	n := len(order[layerIndex])
+	if start := decider.infoUsed; start+n <= len(decider.infoBacking) {
+		decider.NodeInfo[layerIndex] = decider.infoBacking[start : start+n : start+n]
+		decider.infoUsed += n
+		return
+	}
+	decider.NodeInfo[layerIndex] = make([]layerSweepNodeInfo, n)
 }
 
 func (decider *LayerSweepTypeDecider) InitAtNodeLevel(
@@ -79,6 +107,9 @@ func (decider *LayerSweepTypeDecider) UseBottomUp(
 
 	pathsToRandom, pathsToHierarchical := 0, 0
 	northSouthDummies := make([]layered.LNodeID, 0)
+	if decider.dummies != nil {
+		northSouthDummies = (*decider.dummies)[:0]
+	}
 	for _, layer := range order {
 		for _, nodeID := range layer {
 			if arena.Node(nodeID).Type == layered.NorthSouthPortNode {
@@ -98,15 +129,22 @@ func (decider *LayerSweepTypeDecider) UseBottomUp(
 				pathsToRandom += current.connectedEdges
 			}
 
-			for _, edgeID := range arena.NodeOutgoingEdges(nodeID) {
-				value := *decider.nodeInfo(arena, nodeID)
-				pathsToRandom += value.randomInfluence
-				pathsToHierarchical += value.hierarchicalInfluence
-				decider.transferInfoTo(arena, value, arena.EdgeTargetNode(edgeID))
+			// NodeOutgoingEdges and NodePortsOnSide walked in place: nothing
+			// below changes a port list or an edge list.
+			for _, portID := range arena.Node(nodeID).Ports {
+				for _, edgeID := range arena.Port(portID).OutgoingEdges {
+					value := *decider.nodeInfo(arena, nodeID)
+					pathsToRandom += value.randomInfluence
+					pathsToHierarchical += value.hierarchicalInfluence
+					decider.transferInfoTo(arena, value, arena.EdgeTargetNode(edgeID))
+				}
 			}
 
-			for _, side := range []layered.PortSide{layered.NorthSide, layered.SouthSide} {
-				for _, portID := range arena.NodePortsOnSide(nodeID, side) {
+			for _, side := range [2]layered.PortSide{layered.NorthSide, layered.SouthSide} {
+				for _, portID := range arena.Node(nodeID).Ports {
+					if arena.Port(portID).Side != side {
+						continue
+					}
 					dummyID, found := basegraph.TryGet(&arena.Port(portID).Properties, layered.PortDummy)
 					if !found {
 						continue
@@ -120,11 +158,13 @@ func (decider *LayerSweepTypeDecider) UseBottomUp(
 		}
 
 		for _, nodeID := range northSouthDummies {
-			for _, edgeID := range arena.NodeOutgoingEdges(nodeID) {
-				value := *decider.nodeInfo(arena, nodeID)
-				pathsToRandom += value.randomInfluence
-				pathsToHierarchical += value.hierarchicalInfluence
-				decider.transferInfoTo(arena, value, arena.EdgeTargetNode(edgeID))
+			for _, portID := range arena.Node(nodeID).Ports {
+				for _, edgeID := range arena.Port(portID).OutgoingEdges {
+					value := *decider.nodeInfo(arena, nodeID)
+					pathsToRandom += value.randomInfluence
+					pathsToHierarchical += value.hierarchicalInfluence
+					decider.transferInfoTo(arena, value, arena.EdgeTargetNode(edgeID))
+				}
 			}
 		}
 		northSouthDummies = northSouthDummies[:0]
@@ -134,6 +174,9 @@ func (decider *LayerSweepTypeDecider) UseBottomUp(
 	normalized := math.Inf(1)
 	if allPaths != 0 {
 		normalized = float64(pathsToRandom-pathsToHierarchical) / float64(allPaths)
+	}
+	if decider.dummies != nil {
+		*decider.dummies = northSouthDummies[:0]
 	}
 	return normalized >= boundary
 }
@@ -146,8 +189,16 @@ func (decider *LayerSweepTypeDecider) fewerThanTwoInOutEdges(
 	arena *layered.LGraphArena,
 	parent layered.LNodeID,
 ) bool {
-	return len(arena.NodePortsOnSide(parent, layered.EastSide)) < 2 &&
-		len(arena.NodePortsOnSide(parent, layered.WestSide)) < 2
+	east, west := 0, 0
+	for _, portID := range arena.Node(parent).Ports {
+		switch arena.Port(portID).Side {
+		case layered.EastSide:
+			east++
+		case layered.WestSide:
+			west++
+		}
+	}
+	return east < 2 && west < 2
 }
 
 func (decider *LayerSweepTypeDecider) hasNoPorts(
@@ -155,12 +206,10 @@ func (decider *LayerSweepTypeDecider) hasNoPorts(
 	nodeID layered.LNodeID,
 	side layered.PortSide,
 ) bool {
-	ports := arena.NodePortsOnSide(nodeID, side)
-	if len(ports) == 0 {
-		return true
-	}
-	for _, portID := range ports {
-		if len(arena.PortConnectedEdges(portID)) > 0 {
+	// NodePortsOnSide and PortConnectedEdges counted in place; no port on
+	// the side, or none with an edge, both answer true.
+	for _, portID := range arena.Node(nodeID).Ports {
+		if port := arena.Port(portID); port.Side == side && len(port.IncomingEdges)+len(port.OutgoingEdges) > 0 {
 			return false
 		}
 	}
