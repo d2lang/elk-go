@@ -31,7 +31,7 @@ func TestJSONImportAndLayoutTransfer(t *testing.T) {
 		{ID: graphjson.StringID("a"), X: &zero, Width: &width, Height: &height},
 		{ID: graphjson.StringID("b"), Width: &width, Height: &height},
 	}, Edges: []*graphjson.Edge{{ID: graphjson.StringID("e"), Sources: []graphjson.ID{graphjson.StringID("a")}, Targets: []graphjson.ID{graphjson.StringID("b")}}}}
-	codec := NewCodec(NewOptionRegistry())
+	codec := NewJSONCodec(NewOptionRegistry())
 	model, err := codec.Import(input)
 	if err != nil {
 		t.Fatal(err)

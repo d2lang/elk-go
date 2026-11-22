@@ -19,9 +19,9 @@ import (
 	"github.com/d2lang/elk-go/internal/graph"
 )
 
-// A typed import builds the model Import builds for a graph whose elements
-// are given one by one as Go values instead of as a graphjson.Graph: the
-// caller adds them in the order in which Import visits the graph (a node
+// A typed import builds the model JSONCodec.Import builds for a graph whose
+// elements are given one by one as Go values instead of as a graphjson.Graph:
+// the caller adds them in the order in which Import visits the graph (a node
 // with its options, identifier and shape; then its ports, each with its
 // labels; then its labels; then its children, each completely; and after all
 // nodes the edges, each with its labels), and every step runs the same code
@@ -347,7 +347,7 @@ func (codec *Codec) TypedNode(model *graph.Model, id graph.NodeID, identifier st
 	if err := codec.applyNode(&node.Properties, options); err != nil {
 		return err
 	}
-	if err := codec.bindNode(model, id, graphjson.StringID(identifier), nil); err != nil {
+	if err := codec.bindNode(model, id, graphjson.StringID(identifier)); err != nil {
 		return err
 	}
 	if shape != nil {
@@ -366,7 +366,7 @@ func (codec *Codec) TypedChild(model *graph.Model, parent graph.NodeID) graph.No
 // add them with TypedLabel).
 func (codec *Codec) TypedPort(model *graph.Model, node graph.NodeID, identifier string, shape *TypedShape, options *PreparedOptions) (graph.PortID, error) {
 	id := codec.addPort(model, node)
-	if err := codec.bindPort(model, id, graphjson.StringID(identifier), nil); err != nil {
+	if err := codec.bindPort(model, id, graphjson.StringID(identifier)); err != nil {
 		return id, err
 	}
 	port := model.Port(id)
@@ -387,7 +387,7 @@ func (codec *Codec) TypedLabel(model *graph.Model, parent graph.ElementID, text 
 	case graph.EdgeElement:
 		codec.reserveLabel(&model.Edge(parent.Edge).Labels)
 	}
-	id := codec.addLabel(model, parent, text, nil)
+	id := codec.addLabel(model, parent, text)
 	label := model.Label(id)
 	label.TextPresent = true
 	importFullShape(&label.Shape, shape)
@@ -403,7 +403,7 @@ func (codec *Codec) TypedLabel(model *graph.Model, parent graph.ElementID, text 
 // order of the two does not matter.
 func (codec *Codec) TypedEdge(model *graph.Model, parent graph.NodeID, identifier string, sources, targets []string, options *PreparedOptions) (graph.EdgeID, error) {
 	edgeIdentifier := graphjson.StringID(identifier)
-	id := codec.addEdge(model, parent, edgeIdentifier, nil)
+	id := codec.addEdge(model, parent, edgeIdentifier)
 	edge := model.Edge(id)
 	codec.apply(&edge.Properties, options)
 	// Room for the sources and targets (taken from the codec's blocks).
@@ -449,7 +449,7 @@ func (codec *Codec) reserveLabel(labels *[]graph.LabelID) {
 // EdgeOutputOffset and EdgeOutputContainer.
 func (codec *Codec) TypedCoordinates(model *graph.Model) error {
 	// Only node tables: the read-back below reads nothing else.
-	_, err := codec.coordinatesOf(model, false)
+	_, err := codec.nodeCoordinates(model, false)
 	return err
 }
 

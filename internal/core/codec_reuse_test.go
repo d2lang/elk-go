@@ -57,11 +57,11 @@ func TestReleasedCodecImportsAsNew(t *testing.T) {
 	registry := NewOptionRegistry()
 	for _, size := range []int{40, 3, 0, 25, 60, 1, 60} {
 		fresh := reuseTestGraph(size)
-		want, err := NewCodec(registry).Import(fresh)
+		want, err := NewJSONCodec(registry).Import(fresh)
 		if err != nil {
 			t.Fatal(err)
 		}
-		reused := AcquireCodec(registry)
+		reused := AcquireJSONCodec(registry)
 		input := reuseTestGraph(size)
 		got, err := reused.Import(input)
 		if err != nil {
@@ -70,7 +70,7 @@ func TestReleasedCodecImportsAsNew(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("size %d: model of a reused codec differs", size)
 		}
-		freshCodec := NewCodec(registry)
+		freshCodec := NewJSONCodec(registry)
 		freshModel, _ := freshCodec.Import(fresh)
 		if err := freshCodec.TransferLayout(freshModel); err != nil {
 			t.Fatal(err)
@@ -81,7 +81,7 @@ func TestReleasedCodecImportsAsNew(t *testing.T) {
 		if !reflect.DeepEqual(input, fresh) {
 			t.Fatalf("size %d: transfer of a reused codec differs", size)
 		}
-		ReleaseCodec(reused, got)
+		ReleaseJSONCodec(reused, got)
 	}
 }
 
@@ -120,7 +120,7 @@ func TestRememberedParsesMatchParseRaw(t *testing.T) {
 // key resolves to, and that equal orders in other slices are recognised.
 func TestKnownOrdersFollowRegistrations(t *testing.T) {
 	registry := NewOptionRegistry()
-	codec := NewCodec(registry)
+	codec := NewJSONCodec(registry)
 	importDirection := func() string {
 		keys := []string{"direction", "spacing.nodeNode"} // a new slice each time
 		root := &graphjson.Graph{ID: graphjson.StringID("root"),

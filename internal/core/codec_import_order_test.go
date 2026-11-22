@@ -41,7 +41,7 @@ func TestUnconstructableErrorsTakePrecedence(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NewCodec(NewOptionRegistry()).Import(test.graph)
+			_, err := NewJSONCodec(NewOptionRegistry()).Import(test.graph)
 			if err == nil || err.Error() != test.want {
 				t.Fatalf("Import error = %v, want %q", err, test.want)
 			}

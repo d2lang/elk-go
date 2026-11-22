@@ -71,15 +71,6 @@ func (property Property[T]) Key() PropertyKey {
 	return InternPropertyKey(property.ID)
 }
 
-// lookupKey returns the property's key without interning a new ID; an ID
-// that was never interned cannot be stored in any PropertyMap.
-func (property Property[T]) lookupKey() (PropertyKey, bool) {
-	if property.key != 0 {
-		return property.key, true
-	}
-	return LookupPropertyKey(property.ID)
-}
-
 // PropertyKey is the process-wide interned identity of a property ID. Two
 // IDs have the same key exactly when they are the same string. Keys are only
 // ever compared for equality, never ordered, so the order in which IDs are
@@ -410,27 +401,30 @@ func getDefault[T any](properties *PropertyMap, property Property[T]) T {
 	return zero
 }
 
+// TryGet returns the value stored for property if it is a T. A property
+// without a precomputed key (rare) is looked up by ID, through the map's
+// non-generic Raw: an ID that was never interned is stored in no map.
 func TryGet[T any](properties *PropertyMap, property Property[T]) (T, bool) {
+	var value any
 	if key := property.key; key != 0 {
+		index := -1
 		if properties.mask&keyBit(key) != 0 {
-			if index := properties.indexOf(key); index >= 0 {
-				if typed, ok := properties.entries[index].value.(T); ok {
-					return typed, true
-				}
-			}
+			index = properties.indexOf(key)
 		}
-		var zero T
-		return zero, false
-	}
-	if key, known := property.lookupKey(); known {
-		if index := properties.indexOf(key); index >= 0 {
-			if typed, ok := properties.entries[index].value.(T); ok {
-				return typed, true
-			}
+		if index < 0 {
+			var zero T
+			return zero, false
+		}
+		value = properties.entries[index].value
+	} else {
+		var found bool
+		if value, found = properties.Raw(property.ID); !found {
+			var zero T
+			return zero, false
 		}
 	}
-	var zero T
-	return zero, false
+	typed, ok := value.(T)
+	return typed, ok
 }
 
 func Set[T any](properties *PropertyMap, property Property[T], value T) {
@@ -480,18 +474,21 @@ func boxInt(value int) any {
 	return chunk.boxes[value%intBoxChunk]
 }
 
+// Has and Unset are the map's non-generic HasKey and DeleteKey, or Has and
+// Delete by ID for a property without a precomputed key.
 func Has[T any](properties *PropertyMap, property Property[T]) bool {
 	if key := property.key; key != 0 {
-		return properties.indexOf(key) >= 0
+		return properties.HasKey(key)
 	}
-	key, known := property.lookupKey()
-	return known && properties.indexOf(key) >= 0
+	return properties.Has(property.ID)
 }
 
 func Unset[T any](properties *PropertyMap, property Property[T]) {
-	if key, known := property.lookupKey(); known {
+	if key := property.key; key != 0 {
 		properties.DeleteKey(key)
+		return
 	}
+	properties.Delete(property.ID)
 }
 
 type cloneable interface{ Clone() any }

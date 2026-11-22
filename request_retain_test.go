@@ -163,11 +163,11 @@ func TestEmptyOrderImports(t *testing.T) {
 		}
 		return out
 	}
-	want, err := core.NewCodec(options).Import(orderGraph(t, false))
+	want, err := core.NewJSONCodec(options).Import(orderGraph(t, false))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := core.NewCodec(options).Import(orderGraph(t, true))
+	got, err := core.NewJSONCodec(options).Import(orderGraph(t, true))
 	if err != nil {
 		t.Fatal(err)
 	}

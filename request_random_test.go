@@ -199,7 +199,7 @@ func TestRequestMatchesImport(t *testing.T) {
 		gen := &revGen{rng: rand.New(rand.NewSource(seed)), keys: keys}
 		input := gen.graph()
 		graph := decodeLikeLayoutJSON(t, input)
-		codec := core.NewCodec(options)
+		codec := core.NewJSONCodec(options)
 		want, importErr := codec.Import(graph)
 		b := buildRequest(t, decodeLikeLayoutJSON(t, input))
 		reqErr := b.req.Err()

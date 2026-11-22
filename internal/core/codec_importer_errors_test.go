@@ -37,7 +37,7 @@ func TestRejectUnconstructableJSONProperties(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := NewCodec(registry).Import(&graphjson.Graph{
+			_, err := NewJSONCodec(registry).Import(&graphjson.Graph{
 				ID:            graphjson.StringID("root"),
 				LayoutOptions: graphjson.LayoutOptions{test.id: test.value},
 			})
