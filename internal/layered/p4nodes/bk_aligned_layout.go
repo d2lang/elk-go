@@ -32,16 +32,18 @@ const (
 )
 
 // BKAlignedLayout contains all per-node data for one of the four directional
-// Brandes-Koepf layouts. Pointer entries preserve Java's null-filled object
-// arrays and make missing algorithm initialization fail loudly.
+// Brandes-Koepf layouts. Optional entries preserve Java's null-filled object
+// arrays and make missing algorithm initialization fail loudly. (Java never
+// shares or mutates a boxed entry through an alias; every store is a fresh
+// value, so a value plus a set flag represents an entry exactly.)
 type BKAlignedLayout struct {
-	Root       []*layered.LNodeID
-	BlockSize  []*float64
-	Align      []*layered.LNodeID
-	InnerShift []*float64
-	Sink       []*layered.LNodeID
-	Shift      []*float64
-	Y          []*float64
+	Root       []optNode
+	BlockSize  []optFloat
+	Align      []optNode
+	InnerShift []optFloat
+	Sink       []optNode
+	Shift      []optFloat
+	Y          []optFloat
 	VDirection VerticalDirection
 	HDirection HorizontalDirection
 	SU         []bool
@@ -55,15 +57,43 @@ func NewBKAlignedLayout(
 	vertical VerticalDirection,
 	horizontal HorizontalDirection,
 ) *BKAlignedLayout {
-	odd := make([]bool, nodeCount)
+	layout := &BKAlignedLayout{}
+	layout.init(graphID, nodeCount, vertical, horizontal,
+		make([]optNode, 3*nodeCount), make([]optFloat, 4*nodeCount), make([]bool, 2*nodeCount))
+	return layout
+}
+
+// init makes layout a new layout over the given zeroed storage (3, 4 and 2
+// times nodeCount entries), exactly as NewBKAlignedLayout's.
+func (layout *BKAlignedLayout) init(
+	graphID layered.LGraphID,
+	nodeCount int,
+	vertical VerticalDirection,
+	horizontal HorizontalDirection,
+	nodes []optNode,
+	floats []optFloat,
+	flags []bool,
+) {
+	// Three backing arrays, cut into capacity-capped per-field slices.
+	odd := flags[nodeCount : 2*nodeCount : 2*nodeCount]
 	for index := range odd {
 		odd[index] = true
 	}
-	return &BKAlignedLayout{
-		Root: make([]*layered.LNodeID, nodeCount), BlockSize: make([]*float64, nodeCount),
-		Align: make([]*layered.LNodeID, nodeCount), InnerShift: make([]*float64, nodeCount),
-		Sink: make([]*layered.LNodeID, nodeCount), Shift: make([]*float64, nodeCount),
-		Y: make([]*float64, nodeCount), SU: make([]bool, nodeCount), OD: odd,
+	cut := func(start int) (int, int, int) {
+		return start * nodeCount, (start + 1) * nodeCount, (start + 1) * nodeCount
+	}
+	r0, r1, r2 := cut(0)
+	a0, a1, a2 := cut(1)
+	s0, s1, s2 := cut(2)
+	b0, b1, b2 := cut(0)
+	i0, i1, i2 := cut(1)
+	h0, h1, h2 := cut(2)
+	y0, y1, y2 := cut(3)
+	*layout = BKAlignedLayout{
+		Root: nodes[r0:r1:r2], BlockSize: floats[b0:b1:b2],
+		Align: nodes[a0:a1:a2], InnerShift: floats[i0:i1:i2],
+		Sink: nodes[s0:s1:s2], Shift: floats[h0:h1:h2],
+		Y: floats[y0:y1:y2], SU: flags[0:nodeCount:nodeCount], OD: odd,
 		VDirection: vertical, HDirection: horizontal, Graph: graphID,
 	}
 }
@@ -118,7 +148,7 @@ func (layout *BKAlignedLayout) ShiftBlock(
 	for {
 		index := arena.Node(current).ID
 		value := requireFloat(layout.Y[index], "y") + delta
-		layout.Y[index] = floatPointer(value)
+		layout.Y[index] = someFloat(value)
 		current = requireNode(layout.Align[index], "align")
 		if current == rootID {
 			return
@@ -224,19 +254,31 @@ func (layout *BKAlignedLayout) String() string {
 	}
 }
 
-func nodePointer(value layered.LNodeID) *layered.LNodeID { return &value }
-func floatPointer(value float64) *float64                { return &value }
-
-func requireNode(value *layered.LNodeID, field string) layered.LNodeID {
-	if value == nil {
-		panic(fmt.Sprintf("p4nodes: uninitialized %s", field))
-	}
-	return *value
+// optNode and optFloat are entries of Java's null-filled arrays; the zero
+// value is null.
+type optNode struct {
+	value layered.LNodeID
+	set   bool
 }
 
-func requireFloat(value *float64, field string) float64 {
-	if value == nil {
+type optFloat struct {
+	value float64
+	set   bool
+}
+
+func someNode(value layered.LNodeID) optNode { return optNode{value: value, set: true} }
+func someFloat(value float64) optFloat       { return optFloat{value: value, set: true} }
+
+func requireNode(value optNode, field string) layered.LNodeID {
+	if !value.set {
 		panic(fmt.Sprintf("p4nodes: uninitialized %s", field))
 	}
-	return *value
+	return value.value
+}
+
+func requireFloat(value optFloat, field string) float64 {
+	if !value.set {
+		panic(fmt.Sprintf("p4nodes: uninitialized %s", field))
+	}
+	return value.value
 }

@@ -18,6 +18,11 @@ type BKAligner struct {
 	Arena *layered.LGraphArena
 	Graph layered.LGraphID
 	Info  *NeighborhoodInformation
+
+	// Buffers for blockRootsInto, reused by every InsideBlockShift call (each
+	// call consumes its root list before the next one).
+	roots []layered.LNodeID
+	seen  []bool
 }
 
 func NewBKAligner(
@@ -34,26 +39,45 @@ func (aligner *BKAligner) VerticalAlignment(
 	layout *BKAlignedLayout,
 	markedEdges map[layered.LEdgeID]bool,
 ) {
+	var marks edgeMarks
+	for edgeID, marked := range markedEdges {
+		if marked {
+			marks.mark(edgeID)
+		}
+	}
+	aligner.verticalAlignment(layout, &marks)
+}
+
+func (aligner *BKAligner) verticalAlignment(
+	layout *BKAlignedLayout,
+	markedEdges *edgeMarks,
+) {
 	for _, layerID := range aligner.Arena.Graph(aligner.Graph).Layers {
 		for _, nodeID := range aligner.Arena.Layer(layerID).Nodes {
 			index := aligner.Arena.Node(nodeID).ID
-			layout.Root[index] = nodePointer(nodeID)
-			layout.Align[index] = nodePointer(nodeID)
-			layout.InnerShift[index] = floatPointer(0)
+			layout.Root[index] = someNode(nodeID)
+			layout.Align[index] = someNode(nodeID)
+			layout.InnerShift[index] = someFloat(0)
 		}
 	}
-	layers := append([]layered.LayerID(nil), aligner.Arena.Graph(aligner.Graph).Layers...)
-	if layout.HDirection == HorizontalLeft {
-		reverseLayers(layers)
-	}
-	for _, layerID := range layers {
+	// The layers and their nodes are walked in reverse where ELK reverses
+	// copies; alignment changes neither the layer list nor the node order.
+	layers := aligner.Arena.Graph(aligner.Graph).Layers
+	for layerStep := range layers {
+		layerID := layers[layerStep]
+		if layout.HDirection == HorizontalLeft {
+			layerID = layers[len(layers)-1-layerStep]
+		}
 		r := -1
-		nodes := append([]layered.LNodeID(nil), aligner.Arena.Layer(layerID).Nodes...)
 		if layout.VDirection == VerticalUp {
 			r = math.MaxInt
-			reverseNodes(nodes)
 		}
-		for _, nodeID := range nodes {
+		nodes := aligner.Arena.Layer(layerID).Nodes
+		for nodeStep := range nodes {
+			nodeID := nodes[nodeStep]
+			if layout.VDirection == VerticalUp {
+				nodeID = nodes[len(nodes)-1-nodeStep]
+			}
 			neighbors := aligner.Info.LeftNeighbors[aligner.Arena.Node(nodeID).ID]
 			if layout.HDirection == HorizontalLeft {
 				neighbors = aligner.Info.RightNeighbors[aligner.Arena.Node(nodeID).ID]
@@ -79,7 +103,7 @@ func (aligner *BKAligner) VerticalAlignment(
 
 func (aligner *BKAligner) tryAlign(
 	layout *BKAlignedLayout,
-	markedEdges map[layered.LEdgeID]bool,
+	markedEdges *edgeMarks,
 	nodeID layered.LNodeID,
 	neighbor Neighbor,
 	r int,
@@ -94,14 +118,14 @@ func (aligner *BKAligner) tryAlign(
 	if up {
 		positionAllowed = r > neighborPosition
 	}
-	if markedEdges[neighbor.Edge] || !positionAllowed {
+	if markedEdges.has(neighbor.Edge) || !positionAllowed {
 		return r
 	}
 	neighborIndex := aligner.Arena.Node(neighbor.Node).ID
-	layout.Align[neighborIndex] = nodePointer(nodeID)
+	layout.Align[neighborIndex] = someNode(nodeID)
 	rootID := requireNode(layout.Root[neighborIndex], "root")
-	layout.Root[index] = nodePointer(rootID)
-	layout.Align[index] = nodePointer(rootID)
+	layout.Root[index] = someNode(rootID)
+	layout.Align[index] = someNode(rootID)
 	rootIndex := aligner.Arena.Node(rootID).ID
 	layout.OD[rootIndex] = layout.OD[rootIndex] && aligner.Arena.Node(nodeID).Type == layered.LongEdgeNode
 	return neighborPosition
@@ -110,10 +134,11 @@ func (aligner *BKAligner) tryAlign(
 // InsideBlockShift accounts for node sizes, margins, and port positions after
 // the original BK block construction.
 func (aligner *BKAligner) InsideBlockShift(layout *BKAlignedLayout) {
-	for _, rootID := range blockRoots(aligner.Arena, aligner.Graph, layout) {
+	aligner.roots, aligner.seen = blockRootsInto(aligner.Arena, aligner.Graph, layout, aligner.roots, aligner.seen)
+	for _, rootID := range aligner.roots {
 		spaceAbove := aligner.Arena.Node(rootID).Margin.Top
 		spaceBelow := aligner.Arena.Node(rootID).Size.Y + aligner.Arena.Node(rootID).Margin.Bottom
-		layout.InnerShift[aligner.Arena.Node(rootID).ID] = floatPointer(0)
+		layout.InnerShift[aligner.Arena.Node(rootID).ID] = someFloat(0)
 		current := rootID
 		for {
 			next := requireNode(layout.Align[aligner.Arena.Node(current).ID], "align")
@@ -131,7 +156,7 @@ func (aligner *BKAligner) InsideBlockShift(layout *BKAlignedLayout) {
 				portPositionDifference = target.Position.Y + target.Anchor.Y - source.Position.Y - source.Anchor.Y
 			}
 			nextInnerShift := requireFloat(layout.InnerShift[aligner.Arena.Node(current).ID], "inner shift") + portPositionDifference
-			layout.InnerShift[aligner.Arena.Node(next).ID] = floatPointer(nextInnerShift)
+			layout.InnerShift[aligner.Arena.Node(next).ID] = someFloat(nextInnerShift)
 			spaceAbove = math.Max(spaceAbove, aligner.Arena.Node(next).Margin.Top-nextInnerShift)
 			spaceBelow = math.Max(spaceBelow, nextInnerShift+aligner.Arena.Node(next).Size.Y+aligner.Arena.Node(next).Margin.Bottom)
 			current = next
@@ -139,55 +164,64 @@ func (aligner *BKAligner) InsideBlockShift(layout *BKAlignedLayout) {
 		current = rootID
 		for {
 			index := aligner.Arena.Node(current).ID
-			layout.InnerShift[index] = floatPointer(requireFloat(layout.InnerShift[index], "inner shift") + spaceAbove)
+			layout.InnerShift[index] = someFloat(requireFloat(layout.InnerShift[index], "inner shift") + spaceAbove)
 			current = requireNode(layout.Align[index], "align")
 			if current == rootID {
 				break
 			}
 		}
-		layout.BlockSize[aligner.Arena.Node(rootID).ID] = floatPointer(spaceAbove + spaceBelow)
+		layout.BlockSize[aligner.Arena.Node(rootID).ID] = someFloat(spaceAbove + spaceBelow)
 	}
 }
 
-func blockRoots(
+// blockRootsInto returns the roots of the layout's blocks, each once, in the
+// order in which a node of each block first comes, layer by layer, filling
+// the given buffers (returned grown).
+func blockRootsInto(
 	arena *layered.LGraphArena,
 	graphID layered.LGraphID,
 	layout *BKAlignedLayout,
-) []layered.LNodeID {
-	roots := make([]layered.LNodeID, 0)
-	seen := make(map[layered.LNodeID]bool)
+	roots []layered.LNodeID,
+	seen []bool,
+) ([]layered.LNodeID, []bool) {
+	// At most one root per node of the graph.
+	if cap(roots) < len(layout.Root) {
+		roots = make([]layered.LNodeID, 0, len(layout.Root))
+	}
+	roots = roots[:0]
+	// Roots are nodes of this graph, so their scratch IDs index the layout.
+	if cap(seen) < len(layout.Root) {
+		seen = make([]bool, len(layout.Root))
+	} else {
+		seen = seen[:len(layout.Root)]
+		clear(seen)
+	}
 	for _, layerID := range arena.Graph(graphID).Layers {
 		for _, nodeID := range arena.Layer(layerID).Nodes {
 			rootID := requireNode(layout.Root[arena.Node(nodeID).ID], "root")
-			if !seen[rootID] {
-				seen[rootID] = true
+			if rootIndex := arena.Node(rootID).ID; !seen[rootIndex] {
+				seen[rootIndex] = true
 				roots = append(roots, rootID)
 			}
 		}
 	}
-	return roots
+	return roots, seen
 }
 
 func edgeBetween(
 	arena *layered.LGraphArena,
 	first, second layered.LNodeID,
 ) (layered.LEdgeID, bool) {
-	for _, edgeID := range arena.NodeConnectedEdges(first) {
-		if arena.EdgeOtherNode(edgeID, first) == second {
-			return edgeID, true
+	// NodeConnectedEdges order: per port, incoming then outgoing.
+	for _, portID := range arena.Node(first).Ports {
+		port := arena.Port(portID)
+		for _, edges := range [2][]layered.LEdgeID{port.IncomingEdges, port.OutgoingEdges} {
+			for _, edgeID := range edges {
+				if arena.EdgeOtherNode(edgeID, first) == second {
+					return edgeID, true
+				}
+			}
 		}
 	}
 	return 0, false
-}
-
-func reverseLayers(values []layered.LayerID) {
-	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
-		values[left], values[right] = values[right], values[left]
-	}
-}
-
-func reverseNodes(values []layered.LNodeID) {
-	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
-		values[left], values[right] = values[right], values[left]
-	}
 }

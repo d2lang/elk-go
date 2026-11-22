@@ -20,28 +20,47 @@ type postprocessable struct {
 	free     layered.LNodeID
 	isRoot   bool
 	hasEdges bool
-	edge     *layered.LEdgeID
+	edge     layered.LEdgeID
+	hasEdge  bool // edge is set; false is Java's null edge
 }
 
 type ThresholdStrategy struct {
-	simple           bool
-	blockFinished    map[layered.LNodeID]bool
+	simple bool
+	// blockFinished is indexed by the scratch ID of a block's root (block
+	// roots are nodes of the graph being placed).
+	blockFinished    []bool
 	postprocessQueue []postprocessable
 	postprocessStack []postprocessable
 }
 
 func NewThresholdStrategy(simple bool) *ThresholdStrategy {
-	return &ThresholdStrategy{simple: simple, blockFinished: make(map[layered.LNodeID]bool)}
+	return &ThresholdStrategy{simple: simple}
+}
+
+// reset is NewThresholdStrategy(simple) keeping the strategy's storage.
+func (strategy *ThresholdStrategy) reset(simple bool) {
+	strategy.simple = simple
+	strategy.Init()
 }
 
 func (strategy *ThresholdStrategy) Init() {
-	clear(strategy.blockFinished)
+	strategy.initFor(0)
+}
+
+// initFor is Init for a graph of nodeCount nodes: no block is finished.
+func (strategy *ThresholdStrategy) initFor(nodeCount int) {
+	if cap(strategy.blockFinished) < nodeCount {
+		strategy.blockFinished = make([]bool, nodeCount)
+	} else {
+		strategy.blockFinished = strategy.blockFinished[:nodeCount]
+		clear(strategy.blockFinished)
+	}
 	strategy.postprocessQueue = strategy.postprocessQueue[:0]
 	strategy.postprocessStack = strategy.postprocessStack[:0]
 }
 
-func (strategy *ThresholdStrategy) FinishBlock(nodeID layered.LNodeID) {
-	strategy.blockFinished[nodeID] = true
+func (strategy *ThresholdStrategy) finishBlock(arena *layered.LGraphArena, nodeID layered.LNodeID) {
+	strategy.blockFinished[arena.Node(nodeID).ID] = true
 }
 
 func (strategy *ThresholdStrategy) CalculateThreshold(
@@ -76,38 +95,40 @@ func (strategy *ThresholdStrategy) pickEdge(
 	layout *BKAlignedLayout,
 	processable *postprocessable,
 ) {
-	var edges []layered.LEdgeID
+	var incoming bool
 	if processable.isRoot {
-		if layout.HDirection == HorizontalRight {
-			edges = arena.NodeIncomingEdges(processable.free)
-		} else {
-			edges = arena.NodeOutgoingEdges(processable.free)
-		}
-	} else if layout.HDirection == HorizontalLeft {
-		edges = arena.NodeIncomingEdges(processable.free)
+		incoming = layout.HDirection == HorizontalRight
 	} else {
-		edges = arena.NodeOutgoingEdges(processable.free)
+		incoming = layout.HDirection == HorizontalLeft
 	}
 	hasEdges := false
-	for _, edgeID := range edges {
-		rootID := requireNode(layout.Root[arena.Node(processable.free).ID], "root")
-		if !layout.OD[arena.Node(rootID).ID] && arena.EdgeIsInLayer(edgeID) {
-			continue
+	// NodeIncomingEdges / NodeOutgoingEdges order: the ports' edge lists in
+	// port order, walked without building the list.
+	for _, portID := range arena.Node(processable.free).Ports {
+		edges := arena.Port(portID).OutgoingEdges
+		if incoming {
+			edges = arena.Port(portID).IncomingEdges
 		}
-		if layout.SU[arena.Node(rootID).ID] {
-			continue
-		}
-		hasEdges = true
-		other := arena.EdgeOtherNode(edgeID, processable.free)
-		otherRoot := requireNode(layout.Root[arena.Node(other).ID], "root")
-		if strategy.blockFinished[otherRoot] {
-			processable.hasEdges = true
-			processable.edge = edgePointer(edgeID)
-			return
+		for _, edgeID := range edges {
+			rootID := requireNode(layout.Root[arena.Node(processable.free).ID], "root")
+			if !layout.OD[arena.Node(rootID).ID] && arena.EdgeIsInLayer(edgeID) {
+				continue
+			}
+			if layout.SU[arena.Node(rootID).ID] {
+				continue
+			}
+			hasEdges = true
+			other := arena.EdgeOtherNode(edgeID, processable.free)
+			otherRoot := requireNode(layout.Root[arena.Node(other).ID], "root")
+			if strategy.blockFinished[arena.Node(otherRoot).ID] {
+				processable.hasEdges = true
+				processable.edge, processable.hasEdge = edgeID, true
+				return
+			}
 		}
 	}
 	processable.hasEdges = hasEdges
-	processable.edge = nil
+	processable.edge, processable.hasEdge = 0, false
 }
 
 func (strategy *ThresholdStrategy) bound(
@@ -122,13 +143,13 @@ func (strategy *ThresholdStrategy) bound(
 	}
 	processable := postprocessable{free: blockNode, isRoot: isRoot}
 	strategy.pickEdge(arena, layout, &processable)
-	if processable.edge == nil {
+	if !processable.hasEdge {
 		if processable.hasEdges {
 			strategy.postprocessQueue = append(strategy.postprocessQueue, processable)
 		}
 		return invalid
 	}
-	edge := arena.Edge(*processable.edge)
+	edge := arena.Edge(processable.edge)
 	left, right := *edge.Source, *edge.Target
 	rootPort, otherPort := left, right
 	if isRoot {
@@ -165,11 +186,11 @@ func (strategy *ThresholdStrategy) PostProcess(
 		processable := strategy.postprocessQueue[0]
 		strategy.postprocessQueue = strategy.postprocessQueue[1:]
 		strategy.pickEdge(arena, layout, &processable)
-		if processable.edge == nil {
+		if !processable.hasEdge {
 			continue
 		}
 		rootID := requireNode(layout.Root[arena.Node(processable.free).ID], "root")
-		if !layout.OD[arena.Node(rootID).ID] && arena.EdgeIsInLayer(*processable.edge) {
+		if !layout.OD[arena.Node(rootID).ID] && arena.EdgeIsInLayer(processable.edge) {
 			continue
 		}
 		if !processPostprocessable(arena, info, layout, processable) {
@@ -190,7 +211,7 @@ func processPostprocessable(
 	layout *BKAlignedLayout,
 	processable postprocessable,
 ) bool {
-	edgeID := *processable.edge
+	edgeID := processable.edge
 	edge := arena.Edge(edgeID)
 	fix, block := *edge.Target, *edge.Source
 	if arena.EdgeSourceNode(edgeID) != processable.free {
@@ -210,5 +231,3 @@ func processPostprocessable(
 	}
 	return false
 }
-
-func edgePointer(value layered.LEdgeID) *layered.LEdgeID { return &value }
