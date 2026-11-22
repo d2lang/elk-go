@@ -38,6 +38,13 @@ type LayerSweepCrossingMinimizer struct {
 	graphsWhoseNodeOrderChanged []int
 	random                      *javacompat.Random
 	randomSeed                  int64
+
+	forsterScratch *forsterScratch // shared by the holders' constraint resolvers
+	index          sweepIndex      // nodes of the holders (see sweepIndex)
+
+	// ws holds everything ProcessHierarchy allocates for a BARYCENTER
+	// minimization, from a pool; it is released when the call returns.
+	ws *crossMinWorkspace
 }
 
 func NewLayerSweepCrossingMinimizer(crossMinType CrossMinType) *LayerSweepCrossingMinimizer {
@@ -84,6 +91,28 @@ func (minimizer *LayerSweepCrossingMinimizer) ProcessHierarchy(
 	if emptyGraph || singleNode && !hierarchical {
 		return nil
 	}
+	if singleNode && !singleNodeDisabled && minimizer.processSingleNode(arena, graphID) {
+		return nil
+	}
+	if minimizer.Type != CrossMinBarycenter {
+		return minimizer.minimizeHierarchy(arena, graphID)
+	}
+	minimizer.ws = acquireCrossMinWorkspace()
+	err := minimizer.minimizeHierarchy(arena, graphID)
+	// The workspace goes back to the pool only from a call that returned: one
+	// that panics (the original panics on some inputs, e.g. in the crossing
+	// counter) may leave any of its scratch half-updated, so it is dropped
+	// with the call instead.
+	minimizer.releaseWorkspace()
+	return err
+}
+
+// minimizeHierarchy is the rest of ProcessHierarchy, run with the minimizer's
+// workspace (if any) acquired.
+func (minimizer *LayerSweepCrossingMinimizer) minimizeHierarchy(
+	arena *layered.LGraphArena,
+	graphID layered.LGraphID,
+) error {
 	graphsToSweepOn, err := minimizer.initialize(arena, graphID)
 	if err != nil {
 		return err
@@ -111,6 +140,20 @@ func (minimizer *LayerSweepCrossingMinimizer) ProcessHierarchy(
 	}
 	minimizer.transferNodeAndPortOrdersToGraph(arena)
 	return nil
+}
+
+// releaseWorkspace returns the call's workspace to the pool; the holders
+// and lists that live in it are dropped first.
+func (minimizer *LayerSweepCrossingMinimizer) releaseWorkspace() {
+	ws := minimizer.ws
+	if ws == nil {
+		return
+	}
+	ws.holderList = minimizer.graphInfoHolders[:0]
+	ws.changedList = minimizer.graphsWhoseNodeOrderChanged[:0]
+	minimizer.graphInfoHolders, minimizer.graphsWhoseNodeOrderChanged = nil, nil
+	minimizer.ws = nil
+	releaseCrossMinWorkspace(ws)
 }
 
 func (minimizer *LayerSweepCrossingMinimizer) minimizeCrossingsNoCounter(
@@ -146,6 +189,11 @@ func (minimizer *LayerSweepCrossingMinimizer) initialize(
 ) ([]int, error) {
 	minimizer.graphInfoHolders = nil
 	minimizer.graphsWhoseNodeOrderChanged = nil
+	ws := minimizer.ws
+	if ws != nil {
+		minimizer.graphInfoHolders = ws.holderList[:0]
+		minimizer.graphsWhoseNodeOrderChanged = ws.changedList[:0]
+	}
 	random, found := basegraph.TryGet(&arena.Graph(rootGraph).Properties, layered.Random)
 	if !found || random == nil {
 		seed := basegraph.Get(&arena.Graph(rootGraph).Properties, layered.RandomSeed)
@@ -155,13 +203,37 @@ func (minimizer *LayerSweepCrossingMinimizer) initialize(
 	minimizer.random = random
 	minimizer.randomSeed = random.NextLong()
 
-	graphsToSweepOn := make([]int, 0)
-	graphs := []layered.LGraphID{rootGraph}
-	for index := 0; index < len(graphs); index++ {
-		currentGraph := graphs[index]
-		arena.Graph(currentGraph).ID = index
-		holder, err := NewGraphInfoHolder(
+	// The constraint resolvers' scratch is the workspace's (every use
+	// empties it first) or the minimizer's own.
+	scratch := minimizer.forsterScratch
+	if ws != nil {
+		scratch = &ws.forsterScratch
+	} else if scratch == nil {
+		scratch = &forsterScratch{}
+		minimizer.forsterScratch = scratch
+	}
+	index := &minimizer.index
+	if ws != nil {
+		index = &ws.index
+	}
+	index.reset(len(arena.Nodes))
+	// ELK prepends each graph not swept into; collect them in discovery order
+	// and reverse once at the end, which gives the same list.
+	var graphsToSweepOn []int
+	var graphs []layered.LGraphID
+	if ws != nil {
+		graphsToSweepOn = ws.sweepOn[:0]
+		graphs = append(ws.graphQueue[:0], rootGraph)
+	} else {
+		graphsToSweepOn = make([]int, 0)
+		graphs = []layered.LGraphID{rootGraph}
+	}
+	for graphIndex := 0; graphIndex < len(graphs); graphIndex++ {
+		currentGraph := graphs[graphIndex]
+		arena.Graph(currentGraph).ID = graphIndex
+		holder, err := newGraphInfoHolder(
 			arena, currentGraph, minimizer.Type, minimizer.graphInfoHolders, random,
+			holderContext{scratch: scratch, index: index, owner: int32(graphIndex + 1), ws: ws},
 		)
 		if err != nil {
 			return nil, err
@@ -169,7 +241,34 @@ func (minimizer *LayerSweepCrossingMinimizer) initialize(
 		graphs = append(graphs, holder.ChildGraphs...)
 		minimizer.graphInfoHolders = append(minimizer.graphInfoHolders, holder)
 		if holder.DontSweepInto() {
-			graphsToSweepOn = append([]int{index}, graphsToSweepOn...)
+			graphsToSweepOn = append(graphsToSweepOn, graphIndex)
+		}
+	}
+	for left, right := 0, len(graphsToSweepOn)-1; left < right; left, right = left+1, right-1 {
+		graphsToSweepOn[left], graphsToSweepOn[right] = graphsToSweepOn[right], graphsToSweepOn[left]
+	}
+	// A holder sweeps into a child graph only through one of its nodes'
+	// nested graphs, all of which are in its ChildGraphs.
+	for _, holder := range minimizer.graphInfoHolders {
+		for _, child := range holder.ChildGraphs {
+			if !minimizer.graphInfoHolders[arena.Graph(child).ID].DontSweepInto() {
+				holder.sweepsIntoChildren = true
+				break
+			}
+		}
+	}
+	if ws != nil {
+		ws.sweepOn, ws.graphQueue = graphsToSweepOn[:0], graphs[:0]
+		// Every scratch ID is final now (see portTable).
+		if table := buildPortTable(ws, arena); table != nil {
+			skipTrivial := portsStayWithTheirNodes(arena, minimizer.graphInfoHolders)
+			for _, holder := range minimizer.graphInfoHolders {
+				holder.usePortTable(table)
+				if distributor, ok := holder.PortDistributor.(*BarycenterPortDistributor); ok {
+					distributor.skipTrivial = skipTrivial
+				}
+			}
+			buildSweepNodes(ws, arena, minimizer.graphInfoHolders)
 		}
 	}
 	return graphsToSweepOn, nil
@@ -191,7 +290,7 @@ func (minimizer *LayerSweepCrossingMinimizer) compareDifferentRandomizedLayouts(
 		basegraph.Get(&graph.Properties, modelOrderCrossingCounterNodeInfluence) != 0 {
 		bestCrossings := math.MaxFloat64
 		if basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) != layered.OrderingNone {
-			basegraph.Set(&graph.Properties, layered.FirstTryWithInitialOrder, true)
+			holder.setTryWithInitialOrder(arena, layered.FirstTryWithInitialOrder, true)
 		}
 		for try := 0; try < basegraph.Get(&graph.Properties, layered.Thoroughness); try++ {
 			crossings := minimizer.minimizeCrossingsNodePortOrderWithCounter(arena, graphIndex)
@@ -208,7 +307,7 @@ func (minimizer *LayerSweepCrossingMinimizer) compareDifferentRandomizedLayouts(
 
 	bestCrossings := int(^uint(0) >> 1)
 	if basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) != layered.OrderingNone {
-		basegraph.Set(&graph.Properties, layered.FirstTryWithInitialOrder, true)
+		holder.setTryWithInitialOrder(arena, layered.FirstTryWithInitialOrder, true)
 	}
 	for try := 0; try < basegraph.Get(&graph.Properties, layered.Thoroughness); try++ {
 		crossings := minimizer.minimizeCrossingsWithCounter(arena, graphIndex)
@@ -233,27 +332,26 @@ func (minimizer *LayerSweepCrossingMinimizer) minimizeCrossingsWithCounter(
 	// ELK 0.9 keeps a crossing-free model order completely unchanged. A
 	// regular first sweep may otherwise shuffle unconnected ports even though
 	// the input order is already optimal.
-	if basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
+	if holder.tryWithInitialOrder(arena) &&
 		minimizer.countCurrentNumberOfCrossings(arena, graphIndex) == 0 {
 		return 0
 	}
-	if (!basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
-		!basegraph.Get(&graph.Properties, layered.SecondTryWithInitialOrder)) ||
+	if (!holder.tryWithInitialOrder(arena) && !holder.tryWithInitialOrder(arena)) ||
 		basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) == layered.OrderingNone {
 		holder.CrossMinimizer.SetFirstLayerOrder(holder.CurrentNodeOrder, forward)
 	} else {
-		forward = basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder)
+		forward = holder.tryWithInitialOrder(arena)
 	}
 	minimizer.sweepReducingCrossings(arena, graphIndex, forward, true)
 
 	// These two properties intentionally share one raw key in ELK 0.8.1.
 	// Re-read after each mutation instead of caching both values.
-	if basegraph.Get(&graph.Properties, layered.SecondTryWithInitialOrder) {
-		basegraph.Set(&graph.Properties, layered.SecondTryWithInitialOrder, false)
+	if holder.tryWithInitialOrder(arena) {
+		holder.setTryWithInitialOrder(arena, layered.SecondTryWithInitialOrder, false)
 	}
-	if basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) {
-		basegraph.Set(&graph.Properties, layered.FirstTryWithInitialOrder, false)
-		basegraph.Set(&graph.Properties, layered.SecondTryWithInitialOrder, true)
+	if holder.tryWithInitialOrder(arena) {
+		holder.setTryWithInitialOrder(arena, layered.FirstTryWithInitialOrder, false)
+		holder.setTryWithInitialOrder(arena, layered.SecondTryWithInitialOrder, true)
 	}
 
 	crossingsInGraph := minimizer.countCurrentNumberOfCrossings(arena, graphIndex)
@@ -283,24 +381,23 @@ func (minimizer *LayerSweepCrossingMinimizer) minimizeCrossingsNodePortOrderWith
 
 	// See minimizeCrossingsWithCounter. Preserve the initial node and port
 	// order when the weighted counter already reports an optimum.
-	if basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
+	if holder.tryWithInitialOrder(arena) &&
 		minimizer.countCurrentNumberOfCrossingsNodePortOrder(arena, graphIndex) == 0 {
 		return 0
 	}
-	if (!basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
-		!basegraph.Get(&graph.Properties, layered.SecondTryWithInitialOrder)) ||
+	if (!holder.tryWithInitialOrder(arena) && !holder.tryWithInitialOrder(arena)) ||
 		basegraph.Get(&graph.Properties, layered.ConsiderModelOrder) == layered.OrderingNone {
 		holder.CrossMinimizer.SetFirstLayerOrder(holder.CurrentNodeOrder, forward)
 	} else {
-		forward = basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder)
+		forward = holder.tryWithInitialOrder(arena)
 	}
 	minimizer.sweepReducingCrossings(arena, graphIndex, forward, true)
-	if basegraph.Get(&graph.Properties, layered.SecondTryWithInitialOrder) {
-		basegraph.Set(&graph.Properties, layered.SecondTryWithInitialOrder, false)
+	if holder.tryWithInitialOrder(arena) {
+		holder.setTryWithInitialOrder(arena, layered.SecondTryWithInitialOrder, false)
 	}
-	if basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) {
-		basegraph.Set(&graph.Properties, layered.FirstTryWithInitialOrder, false)
-		basegraph.Set(&graph.Properties, layered.SecondTryWithInitialOrder, true)
+	if holder.tryWithInitialOrder(arena) {
+		holder.setTryWithInitialOrder(arena, layered.FirstTryWithInitialOrder, false)
+		holder.setTryWithInitialOrder(arena, layered.SecondTryWithInitialOrder, true)
 	}
 
 	crossingsInGraph := minimizer.countCurrentNumberOfCrossingsNodePortOrder(arena, graphIndex)
@@ -329,16 +426,22 @@ func (minimizer *LayerSweepCrossingMinimizer) sweepReducingCrossings(
 	order := holder.CurrentNodeOrder
 	length := len(order)
 	first := sweepFirstIndex(forward, length)
+	// Without a child graph to sweep into, sweepInHierarchicalNodes finds
+	// no node to visit in any layer (see sweepsIntoChildren).
+	sweepsInto := holder.sweepsIntoChildren
 	improved := holder.PortDistributor.DistributePortsWhileSweeping(arena, order, first, forward)
-	improved = minimizer.sweepInHierarchicalNodes(arena, order[first], forward, firstSweep) || improved
+	if sweepsInto {
+		improved = minimizer.sweepInHierarchicalNodes(arena, order[first], forward, firstSweep) || improved
+	}
+	// The try flags are only written between sweeps, never during one (child
+	// sweeps read their own graph's flags), so they are read once here.
+	preordered := firstSweep && !holder.tryWithInitialOrder(arena) && !holder.tryWithInitialOrder(arena)
 	for index := sweepFirstFree(forward, length); sweepNotAtEnd(forward, length, index); index += sweepNext(forward) {
-		graph := arena.Graph(holder.LGraph)
-		preordered := firstSweep &&
-			!basegraph.Get(&graph.Properties, layered.FirstTryWithInitialOrder) &&
-			!basegraph.Get(&graph.Properties, layered.SecondTryWithInitialOrder)
 		improved = holder.CrossMinimizer.MinimizeCrossings(order, index, forward, preordered) || improved
 		improved = holder.PortDistributor.DistributePortsWhileSweeping(arena, order, index, forward) || improved
-		improved = minimizer.sweepInHierarchicalNodes(arena, order[index], forward, firstSweep) || improved
+		if sweepsInto {
+			improved = minimizer.sweepInHierarchicalNodes(arena, order[index], forward, firstSweep) || improved
+		}
 	}
 	minimizer.markGraphChanged(graphIndex)
 	return improved
@@ -378,6 +481,15 @@ func (minimizer *LayerSweepCrossingMinimizer) sweepInHierarchicalNode(
 		holder.CurrentNodeOrder[start] = minimizer.sortPortDummiesByPortPositions(
 			arena, nodeID, holder.CurrentNodeOrder[start], sideOpposedSweep(forward),
 		)
+		// A node entering the holder's layers with a nested graph keeps the
+		// hierarchical visits on (sweepsIntoChildren stays conservative).
+		if !holder.sweepsIntoChildren {
+			for _, layerNode := range holder.CurrentNodeOrder[start] {
+				if arena.Node(layerNode).NestedGraph != nil {
+					holder.sweepsIntoChildren = true
+				}
+			}
+		}
 	} else {
 		holder.CrossMinimizer.SetFirstLayerOrder(holder.CurrentNodeOrder, forward)
 	}
@@ -392,13 +504,23 @@ func (minimizer *LayerSweepCrossingMinimizer) sortPortDummiesByPortPositions(
 	layerCloseToNodeEdge []layered.LNodeID,
 	side layered.PortSide,
 ) []layered.LNodeID {
-	result := make([]layered.LNodeID, 0, len(layerCloseToNodeEdge))
-	for _, portID := range portsInNorthSouthEastWestOrder(arena, parent, side) {
-		if !basegraph.Get(&arena.Port(portID).Properties, layered.InsideConnections) {
+	result := minimizer.ws.nodeIDSlab().take(len(layerCloseToNodeEdge))[:0]
+	// portsInNorthSouthEastWestOrder(parent, side) without the reversed copy:
+	// the side view is read in place (nothing here changes it).
+	view := arena.NodePortSideView(parent, side)
+	reversed := side == layered.SouthSide || side == layered.WestSide
+	if !reversed && side != layered.NorthSide && side != layered.EastSide {
+		view = nil
+	}
+	for index := range view {
+		portID := view[index]
+		if reversed {
+			portID = view[len(view)-1-index]
+		}
+		if !minimizer.insideConnections(arena, portID) {
 			continue
 		}
-		dummyID, found := basegraph.TryGet(&arena.Port(portID).Properties, layered.PortDummy)
-		if found {
+		if dummyID, found := minimizer.portDummy(arena, portID); found {
 			result = append(result, dummyID)
 		}
 	}
@@ -428,7 +550,7 @@ func (minimizer *LayerSweepCrossingMinimizer) sortPortsByDummyPositionsInLastLay
 		port := arena.Port(portID)
 		onEndSide := onRightMostLayer && port.Side == layered.EastSide ||
 			!onRightMostLayer && port.Side == layered.WestSide
-		if !onEndSide || !basegraph.Get(&port.Properties, layered.InsideConnections) {
+		if !onEndSide || !minimizer.insideConnections(arena, portID) {
 			continue
 		}
 		if j < 0 || j >= len(lastLayer) {
@@ -437,11 +559,11 @@ func (minimizer *LayerSweepCrossingMinimizer) sortPortsByDummyPositionsInLastLay
 				parent, arena.Node(parent).Graph, port.Side, portID, index, j, lastLayer,
 			))
 		}
-		origin, found := basegraph.TryGet(&arena.Node(lastLayer[j]).Properties, layered.OriginalElement)
-		if !found || origin.Kind != layered.OriginLPort {
+		origin, isPort := minimizer.lportOrigin(arena, lastLayer[j])
+		if !isPort {
 			panic("p3order: external port dummy has no LPort origin")
 		}
-		ports[index] = origin.LPort
+		ports[index] = origin
 		j += sweepNext(onRightMostLayer)
 	}
 	arena.Node(parent).Ports = ports
@@ -466,6 +588,57 @@ func (minimizer *LayerSweepCrossingMinimizer) setPortOrderOnParentGraph(
 		layered.PortConstraintsOption,
 		layered.PortConstraintsFixedOrder,
 	)
+	// The parent node belongs to the parent graph's holder, whose
+	// distributor may have cached the old value.
+	if parentData := holder.ParentGraphData; parentData != nil {
+		if distributor, ok := parentData.PortDistributor.(*BarycenterPortDistributor); ok {
+			distributor.forgetPortConstraints(*holder.Parent)
+		}
+	}
+}
+
+// portsStayWithTheirNodes reports whether no node can come to list a port
+// of another node during the sweeps. Ports change lists only in
+// sortPortsByDummyPositionsInLastLayer, which writes into a parent node's
+// list the LPort origins of the nodes in its child graph's first or last
+// layer; those layers hold their initial nodes, or the port dummies of the
+// parent's ports after sortPortDummiesByPortPositions. So it suffices that
+// every such node with an LPort origin has a port of the parent as origin.
+func portsStayWithTheirNodes(arena *layered.LGraphArena, holders []*GraphInfoHolder) bool {
+	originAtParent := func(nodeID layered.LNodeID, parent layered.LNodeID) bool {
+		origin, found := basegraph.TryGet(&arena.Node(nodeID).Properties, layered.OriginalElement)
+		if !found || origin.Kind != layered.OriginLPort {
+			return true // never written (sortPortsByDummyPositionsInLastLayer panics instead)
+		}
+		if int(origin.LPort) >= len(arena.Ports) {
+			return false
+		}
+		node := arena.Port(origin.LPort).Node
+		return node != nil && *node == parent
+	}
+	for _, holder := range holders {
+		if holder.Parent == nil {
+			continue
+		}
+		parent := *holder.Parent
+		order := holder.CurrentNodeOrder
+		if len(order) > 0 {
+			for _, layer := range [2][]layered.LNodeID{order[0], order[len(order)-1]} {
+				for _, nodeID := range layer {
+					if !originAtParent(nodeID, parent) {
+						return false
+					}
+				}
+			}
+		}
+		for _, portID := range arena.Node(parent).Ports {
+			dummyID, found := basegraph.TryGet(&arena.Port(portID).Properties, layered.PortDummy)
+			if found && (int(dummyID) >= len(arena.Nodes) || !originAtParent(dummyID, parent)) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (minimizer *LayerSweepCrossingMinimizer) countCurrentNumberOfCrossings(
@@ -512,9 +685,17 @@ func (minimizer *LayerSweepCrossingMinimizer) countCurrentNumberOfCrossingsNodeP
 func (minimizer *LayerSweepCrossingMinimizer) setCurrentlyBestNodeOrders(
 	arena *layered.LGraphArena,
 ) {
+	// No one keeps a reference to a holder's sweep copies beyond the call that
+	// reads them, so they are refilled in place instead of being replaced.
 	for _, graphIndex := range minimizer.graphsWhoseNodeOrderChanged {
 		holder := minimizer.graphInfoHolders[graphIndex]
-		holder.CurrentlyBestNodeAndPortOrder = NewSweepCopy(arena, holder.CurrentNodeOrder)
+		if holder.CurrentlyBestNodeAndPortOrder == nil {
+			copy := minimizer.ws.sweepCopy()
+			copy.fill(arena, holder.CurrentNodeOrder)
+			holder.CurrentlyBestNodeAndPortOrder = copy
+		} else {
+			holder.CurrentlyBestNodeAndPortOrder.fill(arena, holder.CurrentNodeOrder)
+		}
 	}
 }
 
@@ -522,7 +703,13 @@ func (minimizer *LayerSweepCrossingMinimizer) saveAllNodeOrdersOfChangedGraphs()
 	for _, graphIndex := range minimizer.graphsWhoseNodeOrderChanged {
 		holder := minimizer.graphInfoHolders[graphIndex]
 		if holder.CurrentlyBestNodeAndPortOrder != nil {
-			holder.BestNodeAndPortOrder = holder.CurrentlyBestNodeAndPortOrder.Clone()
+			if holder.BestNodeAndPortOrder == nil {
+				copy := minimizer.ws.sweepCopy()
+				copy.fillFrom(holder.CurrentlyBestNodeAndPortOrder)
+				holder.BestNodeAndPortOrder = copy
+			} else {
+				holder.BestNodeAndPortOrder.fillFrom(holder.CurrentlyBestNodeAndPortOrder)
+			}
 		}
 	}
 }

@@ -19,17 +19,6 @@ type binaryIndexedTree struct {
 	maxNum       int
 }
 
-func newBinaryIndexedTree(maxNum int) *binaryIndexedTree {
-	if maxNum < 0 {
-		panic("p3order: negative binary indexed tree size")
-	}
-	return &binaryIndexedTree{
-		binarySums:   make([]int, maxNum+1),
-		numsPerIndex: make([]int, maxNum),
-		maxNum:       maxNum,
-	}
-}
-
 func (tree *binaryIndexedTree) add(index int) {
 	if index < 0 || index >= tree.maxNum {
 		panic("p3order: binary indexed tree index out of range")
@@ -69,9 +58,25 @@ func (tree *binaryIndexedTree) removeAll(index int) {
 }
 
 func (tree *binaryIndexedTree) clear() {
-	tree.binarySums = make([]int, tree.maxNum+1)
-	tree.numsPerIndex = make([]int, tree.maxNum)
+	for index := range tree.binarySums {
+		tree.binarySums[index] = 0
+	}
+	for index := range tree.numsPerIndex {
+		tree.numsPerIndex[index] = 0
+	}
 	tree.size = 0
+}
+
+// reset makes tree an empty tree for values in [0,maxNum), the state
+// newBinaryIndexedTree(maxNum) returns, reusing its storage.
+func (tree *binaryIndexedTree) reset(maxNum int) {
+	if maxNum < 0 {
+		panic("p3order: negative binary indexed tree size")
+	}
+	tree.binarySums = zeroedInts(tree.binarySums, maxNum+1)
+	tree.numsPerIndex = zeroedInts(tree.numsPerIndex, maxNum)
+	tree.size = 0
+	tree.maxNum = maxNum
 }
 
 func (tree *binaryIndexedTree) empty() bool { return tree.size == 0 }

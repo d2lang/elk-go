@@ -22,10 +22,10 @@ func TestForsterConstraintResolverMergesViolatedGroups(t *testing.T) {
 	order := [][]layered.LNodeID{{first, second}}
 	resolver := NewForsterConstraintResolver(arena, order)
 	InitializeForsterConstraintResolver(resolver, arena, order)
-	resolver.state(arena, first).Barycenter = floatPtr(0)
+	resolver.state(arena, first).setBarycenter(0)
 	resolver.state(arena, first).SummedWeight = 0
 	resolver.state(arena, first).Degree = 1
-	resolver.state(arena, second).Barycenter = floatPtr(1)
+	resolver.state(arena, second).setBarycenter(1)
 	resolver.state(arena, second).SummedWeight = 1
 	resolver.state(arena, second).Degree = 1
 	nodes := append([]layered.LNodeID(nil), order[0]...)
@@ -33,7 +33,7 @@ func TestForsterConstraintResolverMergesViolatedGroups(t *testing.T) {
 	if !reflect.DeepEqual(nodes, []layered.LNodeID{second, first}) {
 		t.Fatalf("nodes = %v", nodes)
 	}
-	if got := *resolver.state(arena, first).Barycenter; got != .5 {
+	if got := resolver.state(arena, first).Barycenter; got != .5 {
 		t.Fatalf("merged barycenter = %v", got)
 	}
 }

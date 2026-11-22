@@ -48,10 +48,10 @@ func TestBarycenterFillUnknownPreservesPreorder(t *testing.T) {
 	InitializeForsterConstraintResolver(resolver, arena, order)
 	heuristic := NewBarycenterHeuristic(arena, resolver, javacompat.NewRandom(1), distributor)
 	heuristic.fillUnknownBarycenters(order[0], true)
-	if got := *resolver.state(arena, first).Barycenter; got != -.5 {
+	if got := resolver.state(arena, first).Barycenter; got != -.5 {
 		t.Fatalf("first barycenter = %v", got)
 	}
-	if got := *resolver.state(arena, second).Barycenter; got != 0 {
+	if got := resolver.state(arena, second).Barycenter; got != 0 {
 		t.Fatalf("second barycenter = %v", got)
 	}
 }
