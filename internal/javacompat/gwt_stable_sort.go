@@ -24,11 +24,24 @@ package javacompat
 // records comparisons or derives transitive state, as ELK's model-order
 // comparators do.
 func GWTStableSort[T any](values []T, compare func(T, T) int) {
+	GWTStableSortBuffer(values, compare, nil)
+}
+
+// GWTStableSortBuffer is GWTStableSort with a caller-owned scratch buffer for
+// the auxiliary copy; it returns the buffer (possibly grown) for reuse. Runs
+// shorter than seven elements never read the auxiliary array, so no copy is
+// made for them.
+func GWTStableSortBuffer[T any](values []T, compare func(T, T) int, buffer []T) []T {
 	if compare == nil {
 		panic("javacompat.GWTStableSort: nil comparator")
 	}
-	auxiliary := append([]T(nil), values...)
+	if len(values) < 7 {
+		gwtMergeSort(nil, values, 0, len(values), compare)
+		return buffer
+	}
+	auxiliary := append(buffer[:0], values...)
 	gwtMergeSort(auxiliary, values, 0, len(values), compare)
+	return auxiliary
 }
 
 func gwtMergeSort[T any](source, destination []T, low, high int, compare func(T, T) int) {
