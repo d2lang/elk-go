@@ -114,6 +114,7 @@ than one distinct upstream notice:
 | `internal/random/provider.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/RandomLayoutProvider.java` and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/Core.melk` |
 | `internal/builtins/frozen_options.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/IndividualSpacings.java` for `parseIndividualSpacings`; the remaining compatibility metadata is transcribed from `knownLayoutOptions()` output of the pinned ELK.js asset rather than from an additional implementation source file |
 | `internal/core/codec.go` | `plugins/org.eclipse.elk.graph.json/src/org/eclipse/elk/graph/json/JsonImporter.xtend` and `JsonExporter.xtend` |
+| `internal/core/jsoncodec.go` | `plugins/org.eclipse.elk.graph.json/src/org/eclipse/elk/graph/json/JsonImporter.xtend` and `JsonExporter.xtend` |
 | `internal/core/engine.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/RecursiveGraphLayoutEngine.java` and `data/LayoutAlgorithmResolver.java` |
 | `internal/core/options.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/Core.melk`, `util/IndividualSpacings.java`, and `options/Direction.java`, `HierarchyHandling.java`, `ContentAlignment.java`, `PortSide.java`, `PortConstraints.java`, `SizeConstraint.java`, `PortAlignment.java`, and `EdgeType.java` |
 | `internal/core/registry.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/Core.melk` and `plugins/org.eclipse.elk.graph/src/org/eclipse/elk/graph/properties/GraphFeature.java` |
@@ -159,6 +160,7 @@ historical 0.8.1 baseline. Paths in this table resolve against the exact ELK
 | Go file | Exact ELK 0.12.0 source file(s) |
 | --- | --- |
 | `internal/core/codec.go` | `plugins/org.eclipse.elk.graph.json/src/org/eclipse/elk/graph/json/JsonImporter.xtend`, `JsonExporter.xtend`, and `JsonAdapter.xtend`; `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/data/LayoutOptionData.java`; and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/options/ShapeCoords.java` and `EdgeCoords.java` |
+| `internal/core/jsoncodec.go` | `plugins/org.eclipse.elk.graph.json/src/org/eclipse/elk/graph/json/JsonImporter.xtend`, `JsonExporter.xtend`, and `JsonAdapter.xtend`; and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/options/ShapeCoords.java` and `EdgeCoords.java` |
 | `internal/core/topdown.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/RecursiveGraphLayoutEngine.java` and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/ElkUtil.java` (`computeChildAreaDimensions`) |
 | `internal/layered/compound.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/compound/CompoundGraphPostprocessor.java` and `graph/LGraphUtil.java` (`changeCoordSystem` identity and coordinate-operation order) |
 | `internal/layered/transferrer.go` | `plugins/org.eclipse.elk.alg.layered/src/org/eclipse/elk/alg/layered/graph/transform/ElkGraphLayoutTransferrer.java` (anchor, hierarchy offset, bend-point, and edge-label coordinate grouping) |

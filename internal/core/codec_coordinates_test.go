@@ -30,7 +30,7 @@ func TestJSONShapeCoordinatesRoot(t *testing.T) {
 		}},
 	}
 
-	codec := NewCodec(NewOptionRegistry())
+	codec := NewJSONCodec(NewOptionRegistry())
 	model, err := codec.Import(root)
 	if err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestJSONShapeCoordinatesParentAndInherit(t *testing.T) {
 					ID: graphjson.StringID("child"), X: graphjson.Float64(100), Y: graphjson.Float64(200),
 				}},
 			}
-			codec := NewCodec(NewOptionRegistry())
+			codec := NewJSONCodec(NewOptionRegistry())
 			model, err := codec.Import(root)
 			if err != nil {
 				t.Fatal(err)
@@ -114,7 +114,7 @@ func TestJSONEdgeCoordinateModes(t *testing.T) {
 				Edges: []*graphjson.Edge{edge},
 			}
 
-			codec := NewCodec(NewOptionRegistry())
+			codec := NewJSONCodec(NewOptionRegistry())
 			model, err := codec.Import(root)
 			if err != nil {
 				t.Fatal(err)
@@ -154,7 +154,7 @@ func TestPrimitiveEdgeBendPointsImportedOnce(t *testing.T) {
 			BendPoints: []graphjson.Point{{X: 1, Y: 2}, {X: 3, Y: 4}},
 		}},
 	}
-	model, err := NewCodec(NewOptionRegistry()).Import(root)
+	model, err := NewJSONCodec(NewOptionRegistry()).Import(root)
 	if err != nil {
 		t.Fatal(err)
 	}

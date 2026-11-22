@@ -67,28 +67,43 @@ func wideGraph(n, ports int) *graphjson.Graph {
 	return root
 }
 
-// TestReleasedCodecBounded imports graphs of growing size
-// through acquired codecs and checks what the slot keeps after each release:
-// at most maxRetainedBytes, ID maps of at most maxRetainedIDs bindings, and
-// a codec that imports as a new one does.
+// TestReleasedCodecBounded imports graphs of growing size through acquired
+// JSON codecs and checks what the slots keep after each release: at most
+// maxRetainedBytes each, ID maps of at most maxRetainedIDs bindings, emptied
+// JSON tables and scratch, and codecs that import as new ones do.
 func TestReleasedCodecBounded(t *testing.T) {
 	registry := NewOptionRegistry()
 	drain := func() {
 		for releasedCodecs.Get() != nil {
 		}
+		for releasedJSONCodecs.Get() != nil {
+		}
 	}
 	for _, size := range []struct{ nodes, ports int }{{10, 0}, {3000, 0}, {20, 0}, {200, 100}, {5000, 2}, {10, 1}} {
 		drain()
-		codec := AcquireCodec(registry)
-		model, err := codec.Import(wideGraph(size.nodes, size.ports))
+		jsonCodec := AcquireJSONCodec(registry)
+		model, err := jsonCodec.Import(wideGraph(size.nodes, size.ports))
 		if err != nil {
 			t.Fatal(err)
 		}
-		ReleaseCodec(codec, model)
-		// Only the slot survives collections: an oversized codec may go to the
-		// sync.Pool under gc, never to the slot.
+		codec := jsonCodec.Codec
+		ReleaseJSONCodec(jsonCodec, model)
+		// Only the slots survive collections: an oversized codec may go to a
+		// sync.Pool under gc, never to a slot.
 		runtime.GC()
 		runtime.GC()
+		if keptJSON := releasedJSONCodecs.Get(); keptJSON != nil {
+			if bytes := keptJSON.tableBytes(); bytes > maxRetainedBytes {
+				t.Fatalf("%v: the JSON codec slot keeps %d bytes", size, bytes)
+			}
+			tables := len(keptJSON.nodeJSON) + len(keptJSON.portJSON) + len(keptJSON.edgeJSON) + len(keptJSON.labelJSON) + len(keptJSON.sectionJSON)
+			if keptJSON.Codec != nil || tables != 0 || !reflect.DeepEqual(keptJSON.keyLists, [keyListsKept]keyListInfo{}) ||
+				!reflect.DeepEqual(keptJSON.rawBuffer, [rawBufferSize]any{}) {
+				t.Fatalf("%v: a released JSON codec was not emptied", size)
+			}
+		} else if !reuse.OversizedToPool && !reflect.DeepEqual(*jsonCodec, JSONCodec{}) {
+			t.Fatalf("%v: a dropped JSON codec was not emptied", size)
+		}
 		kept := releasedCodecs.Get()
 		if kept == nil {
 			// Not in the slot: it must have been too large. Under TinyGo it is
@@ -112,12 +127,12 @@ func TestReleasedCodecBounded(t *testing.T) {
 			kept.portIDs.text != nil && size.nodes*size.ports > maxRetainedIDs) {
 			t.Fatalf("%v: an oversized ID map was kept", size)
 		}
-		// The kept codec imports as a new one.
-		fresh, err := NewCodec(registry).Import(wideGraph(7, 2))
+		// The kept codecs import as new ones.
+		fresh, err := NewJSONCodec(registry).Import(wideGraph(7, 2))
 		if err != nil {
 			t.Fatal(err)
 		}
-		reused := AcquireCodec(registry)
+		reused := AcquireJSONCodec(registry)
 		got, err := reused.Import(wideGraph(7, 2))
 		if err != nil {
 			t.Fatal(err)
@@ -125,7 +140,7 @@ func TestReleasedCodecBounded(t *testing.T) {
 		if !reflect.DeepEqual(modelValues(got), modelValues(fresh)) {
 			t.Fatalf("%v: a reused codec imports differently", size)
 		}
-		ReleaseCodec(reused, got)
+		ReleaseJSONCodec(reused, got)
 	}
 }
 

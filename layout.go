@@ -26,22 +26,22 @@ import (
 func Layout(input *Graph) error {
 	options, _ := sharedRegistries()
 	// The codec and the model's arenas are reused by later calls (see
-	// core.ReleaseCodec); nothing of either is referenced after the call.
-	codec := core.AcquireCodec(options)
+	// core.ReleaseJSONCodec); nothing of either is referenced after the call.
+	codec := core.AcquireJSONCodec(options)
 	model, err := codec.Import(input)
 	if err != nil {
-		core.ReleaseCodec(codec, nil)
+		core.ReleaseJSONCodec(codec, nil)
 		return fmt.Errorf("import ELK graph: %w", err)
 	}
 	if err := layoutModel(model); err != nil {
-		core.ReleaseCodec(codec, model)
+		core.ReleaseJSONCodec(codec, model)
 		return fmt.Errorf("layout ELK graph: %w", err)
 	}
 	if err := codec.TransferLayout(model); err != nil {
-		core.ReleaseCodec(codec, model)
+		core.ReleaseJSONCodec(codec, model)
 		return fmt.Errorf("export ELK layout: %w", err)
 	}
-	core.ReleaseCodec(codec, model)
+	core.ReleaseJSONCodec(codec, model)
 	return nil
 }
 

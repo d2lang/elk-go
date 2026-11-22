@@ -329,7 +329,7 @@ func TestRequestSharedOptionsMatchImport(t *testing.T) {
 	}
 	registry, _ := sharedRegistries()
 	for _, global := range []bool{false, true} {
-		want, err := core.NewCodec(registry).Import(graph)
+		want, err := core.NewJSONCodec(registry).Import(graph)
 		if err != nil {
 			t.Fatal(err)
 		}

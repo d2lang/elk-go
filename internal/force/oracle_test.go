@@ -49,7 +49,7 @@ func forceLayoutJSON(input []byte) ([]byte, error) {
 	if err := force.Register(algorithms); err != nil {
 		return nil, err
 	}
-	codec := core.NewCodec(options)
+	codec := core.NewJSONCodec(options)
 	model, err := codec.Import(&value)
 	if err != nil {
 		return nil, err
