@@ -51,8 +51,18 @@ func (engine *Engine) Layout(model *graph.Model) error {
 }
 
 func (engine *Engine) resolveAlgorithms(model *graph.Model) error {
-	nodes := append([]graph.NodeID{model.Root}, model.Descendants(model.Root)...)
-	for _, nodeID := range nodes {
+	// The root, then its descendants in Model.Descendants' order (depth
+	// first, children in their order), taken from a stack instead of a list
+	// built first: resolving a node changes no node's children.
+	stack := make([]graph.NodeID, 1, 16)
+	stack[0] = model.Root
+	for len(stack) > 0 {
+		nodeID := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		children := model.Node(nodeID).Children
+		for index := len(children) - 1; index >= 0; index-- {
+			stack = append(stack, children[index])
+		}
 		node := model.Node(nodeID)
 		if graph.Get(&node.Properties, NoLayout) {
 			continue
@@ -239,7 +249,16 @@ func (engine *Engine) evaluateHierarchyHandling(model *graph.Model, nodeID graph
 	}
 	value := "SEPARATE_CHILDREN"
 	if node.Parent != nil {
-		value = graph.Get(&model.Node(*node.Parent).Properties, HierarchyHandling)
+		parent := &model.Node(*node.Parent).Properties
+		// A string stored on the parent is the value Get returns; store
+		// its box (boxed strings cannot change) instead of boxing a copy.
+		if raw, found := parent.RawKey(HierarchyHandling.Key()); found {
+			if _, isString := raw.(string); isString {
+				node.Properties.SetRawKey(HierarchyHandling.Key(), raw)
+				return
+			}
+		}
+		value = graph.Get(parent, HierarchyHandling)
 	}
 	graph.Set(&node.Properties, HierarchyHandling, value)
 }
