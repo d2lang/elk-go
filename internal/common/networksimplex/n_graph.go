@@ -43,6 +43,22 @@ func (node *Node) ConnectedEdges() []EdgeID {
 	return edges
 }
 
+// connectedLists returns the incoming and outgoing edge lists; iterating them
+// in order visits ConnectedEdges' edges without copying them.
+func (node *Node) connectedLists() [2][]EdgeID {
+	return [2][]EdgeID{node.IncomingEdges, node.OutgoingEdges}
+}
+
+func (node *Node) connectedCount() int { return len(node.IncomingEdges) + len(node.OutgoingEdges) }
+
+// firstConnected is ConnectedEdges()[0]; the node must have an edge.
+func (node *Node) firstConnected() EdgeID {
+	if len(node.IncomingEdges) > 0 {
+		return node.IncomingEdges[0]
+	}
+	return node.OutgoingEdges[0]
+}
+
 // Edge is the Go counterpart of NEdge.
 type Edge struct {
 	ID     int
@@ -83,12 +99,57 @@ func (graph *Graph) Node(id NodeID) *Node { return &graph.nodes[int(id)] }
 func (graph *Graph) Edge(id EdgeID) *Edge { return &graph.edges[int(id)] }
 func (graph *Graph) EdgeCount() int       { return len(graph.edges) }
 
-// AddNode creates and appends an NNode.
+// AddNode creates and appends an NNode. In a reset graph the new node reuses
+// the (emptied) edge lists left in its slot by reset; it starts empty either
+// way.
 func (graph *Graph) AddNode() NodeID {
 	id := NodeID(len(graph.nodes))
-	graph.nodes = append(graph.nodes, Node{})
+	var node Node
+	if n := len(graph.nodes); n < cap(graph.nodes) {
+		slot := &graph.nodes[:n+1][n]
+		node.IncomingEdges = slot.IncomingEdges[:0]
+		node.OutgoingEdges = slot.OutgoingEdges[:0]
+		node.unknownCutvalues = slot.unknownCutvalues[:0]
+	}
+	graph.nodes = append(graph.nodes, node)
 	graph.Nodes = append(graph.Nodes, id)
 	return id
+}
+
+// reset empties graph for reuse, keeping its storage. Each node slot keeps
+// only its emptied edge lists (which no other node shares); origins are
+// dropped so nothing they reference is kept alive.
+func (graph *Graph) reset() {
+	for index := range graph.nodes {
+		node := &graph.nodes[index]
+		*node = Node{
+			IncomingEdges:    keptEdgeList(node.IncomingEdges),
+			OutgoingEdges:    keptEdgeList(node.OutgoingEdges),
+			unknownCutvalues: keptEdgeList(node.unknownCutvalues),
+		}
+	}
+	for index := range graph.edges {
+		graph.edges[index] = Edge{}
+	}
+	graph.Nodes, graph.nodes, graph.edges = graph.Nodes[:0], graph.nodes[:0], graph.edges[:0]
+}
+
+// maxKeptEdgeList bounds the capacity of an edge list a reset node slot
+// keeps for its next node (a larger list is dropped), so that the storage of
+// a reused graph stays proportional to its node slots.
+const maxKeptEdgeList = 32
+
+func keptEdgeList(edges []EdgeID) []EdgeID {
+	if cap(edges) > maxKeptEdgeList {
+		return nil
+	}
+	return edges[:0]
+}
+
+// retainedBytes bounds the bytes of storage a reset graph keeps on a 64-bit
+// platform (node slots with their kept edge lists, edge slots, the node list).
+func (graph *Graph) retainedBytes() int {
+	return cap(graph.Nodes)*4 + cap(graph.nodes)*(120+3*maxKeptEdgeList*4) + cap(graph.edges)*64
 }
 
 // AddEdge creates an NEdge and registers it with both endpoints.
@@ -150,14 +211,46 @@ func (graph *Graph) connectedComponentRepresentatives() []NodeID {
 	return representatives
 }
 
+// markComponent marks node and every node connected to it. It is ELK's
+// recursive markComponent made iterative, so that long chains need no deeper
+// call stack: every read and write happens in the recursion's order (a call
+// reads its node's index and mark, marks it, then makes a call for the other
+// end of each of its incoming and then outgoing edges in order, each call
+// completing before the next edge is looked at); the edge lists are read
+// again at each step instead of being kept, as marking changes no list.
 func (graph *Graph) markComponent(node NodeID, marked []bool) {
 	index := graph.Node(node).internalID
 	if marked[index] {
 		return
 	}
 	marked[index] = true
-	for _, edge := range graph.Node(node).ConnectedEdges() {
-		graph.markComponent(graph.Edge(edge).Other(node), marked)
+	type frame struct {
+		node NodeID
+		list int32
+		edge int32
+	}
+	frames := []frame{{node: node}}
+	for len(frames) > 0 {
+		top := &frames[len(frames)-1]
+		edges := graph.Node(top.node).connectedLists()[top.list]
+		if int(top.edge) >= len(edges) {
+			if top.list == 0 {
+				top.list, top.edge = 1, 0
+			} else {
+				frames = frames[:len(frames)-1]
+			}
+			continue
+		}
+		edge := edges[top.edge]
+		top.edge++
+		// The call markComponent(other end, marked).
+		other := graph.Edge(edge).Other(top.node)
+		index := graph.Node(other).internalID
+		if marked[index] {
+			continue
+		}
+		marked[index] = true
+		frames = append(frames, frame{node: other})
 	}
 }
 

@@ -62,3 +62,7 @@ func TestConnectedComponentsPutsLargestFirst(t *testing.T) {
 		t.Fatalf("components = %v", components)
 	}
 }
+
+func connectedComponents(arena *layered.LGraphArena, nodes []layered.LNodeID) [][]layered.LNodeID {
+	return connectedComponentsInto(arena, nodes, &layeringScratch{})
+}
