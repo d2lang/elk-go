@@ -60,6 +60,32 @@ type Origin struct {
 	LEdge LEdgeID
 }
 
+// canonicalID returns the ID of an origin that equals its kind constructor's
+// result for that ID.
+func (origin Origin) canonicalID() (uint32, bool) {
+	var id uint32
+	var canonical Origin
+	switch origin.Kind {
+	case OriginNode:
+		id, canonical = uint32(origin.Node), NodeOrigin(origin.Node)
+	case OriginPort:
+		id, canonical = uint32(origin.Port), PortOrigin(origin.Port)
+	case OriginEdge:
+		id, canonical = uint32(origin.Edge), EdgeOrigin(origin.Edge)
+	case OriginLabel:
+		id, canonical = uint32(origin.Label), LabelOrigin(origin.Label)
+	case OriginLEdge:
+		id, canonical = uint32(origin.LEdge), LEdgeOrigin(origin.LEdge)
+	case OriginLNode:
+		id, canonical = uint32(origin.LNode), LNodeOrigin(origin.LNode)
+	case OriginLPort:
+		id, canonical = uint32(origin.LPort), LPortOrigin(origin.LPort)
+	default:
+		return 0, false
+	}
+	return id, origin == canonical
+}
+
 func NodeOrigin(id basegraph.NodeID) Origin   { return Origin{Kind: OriginNode, Node: id} }
 func PortOrigin(id basegraph.PortID) Origin   { return Origin{Kind: OriginPort, Port: id} }
 func EdgeOrigin(id basegraph.EdgeID) Origin   { return Origin{Kind: OriginEdge, Edge: id} }
@@ -95,7 +121,7 @@ var (
 	CrossingHint                                 = basegraph.PropertyWithDefault("crossingHint", func() int { return 0 })
 	GraphProperties                              = basegraph.PropertyWithDefault("graphProperties", func() GraphProperty { return 0 })
 	ExternalPortSide                             = basegraph.PropertyWithDefault("externalPortSide", func() PortSide { return UndefinedSide })
-	ExternalPortSize                             = basegraph.CloneablePropertyWithDefault("externalPortSize", func() geometry.Point { return geometry.Point{} })
+	ExternalPortSize                             = basegraph.CloneablePropertyWithConstantDefault("externalPortSize", func() geometry.Point { return geometry.Point{} })
 	ExternalPortReplacedDummies                  = basegraph.CloneablePropertyWithDefault("externalPortReplacedDummies", func() []LNodeID { return nil })
 	ExternalPortReplacedDummy                    = basegraph.NewProperty[LNodeID]("externalPortReplacedDummy")
 	ExternalPortConnections                      = basegraph.PropertyWithDefault("externalPortConnections", func() uint8 { return 0 })
@@ -107,7 +133,7 @@ var (
 	InputCollect                                 = basegraph.PropertyWithDefault("inputCollect", func() bool { return false })
 	OutputCollect                                = basegraph.PropertyWithDefault("outputCollect", func() bool { return false })
 	Cyclic                                       = basegraph.PropertyWithDefault("cyclic", func() bool { return false })
-	TargetOffset                                 = basegraph.CloneablePropertyWithDefault("targetOffset", func() geometry.Point { return geometry.Point{} })
+	TargetOffset                                 = basegraph.CloneablePropertyWithConstantDefault("targetOffset", func() geometry.Point { return geometry.Point{} })
 	PartitionDummy                               = basegraph.PropertyWithDefault("partitionConstraint", func() bool { return false })
 	OriginalPortConstraints                      = basegraph.NewProperty[PortConstraints]("originalPortConstraints")
 	SplineNorthSouthPortY                        = basegraph.NewProperty[float64]("splines.nsPortY")

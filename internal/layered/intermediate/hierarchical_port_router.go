@@ -209,6 +209,7 @@ func routeNorthSouthHierarchyEdges(
 		generator := orthogonal.NewGenerator(orthogonal.SouthToNorth, edgeSpacing)
 		start := -nodeSpacing - arena.Graph(graphID).Offset.Y
 		slots := generator.RouteEdges(arena, graphID, northernSources, 0, northernTargets, start)
+		generator.Release()
 		if slots > 0 {
 			height := nodeSpacing + float64(slots-1)*edgeSpacing
 			arena.Graph(graphID).Offset.Y += height
@@ -219,6 +220,7 @@ func routeNorthSouthHierarchyEdges(
 		generator := orthogonal.NewGenerator(orthogonal.NorthToSouth, edgeSpacing)
 		start := arena.Graph(graphID).Size.Y + nodeSpacing - arena.Graph(graphID).Offset.Y
 		slots := generator.RouteEdges(arena, graphID, southernSources, 0, southernTargets, start)
+		generator.Release()
 		if slots > 0 {
 			arena.Graph(graphID).Size.Y += nodeSpacing + float64(slots-1)*edgeSpacing
 		}

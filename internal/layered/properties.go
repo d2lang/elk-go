@@ -17,92 +17,119 @@ import (
 // copyTypedProperties reproduces LGraphElement.copyProperties and then
 // normalizes metadata-layer string enums to the strongly typed values used by
 // the native pipeline.
+//
+// It is one pass over the source entries: an entry whose key has a typed
+// converter is stored converted (or raw when the conversion fails), any other
+// entry is stored cloned. This equals copying every entry and then re-setting
+// each converted property in place: entry positions are fixed by the order in
+// which keys are first inserted, every key is converted independently, and
+// every converted type is a value type whose clone is itself. The aliases are
+// applied last, as before, because they write a different key.
 func copyTypedProperties(target *basegraph.PropertyMap, source *basegraph.PropertyMap) {
-	target.CopyFrom(source)
-	setEnum(source, target, DirectionOption, ParseDirection)
-	setEnum(source, target, PortSideOption, ParsePortSide)
-	setEnum(source, target, Hierarchy, parseHierarchyHandling)
-	setEnum(source, target, PortConstraintsOption, parsePortConstraints)
-	setEnum(source, target, EdgeRoutingOption, parseEdgeRouting)
-	setEnum(source, target, AlignmentOption, parseAlignment)
-	setEnum(source, target, CycleBreaking, ParseCycleBreakingStrategy)
-	setEnum(source, target, Layering, ParseLayeringStrategy)
-	setEnum(source, target, CrossingMinimization, parseCrossingMinimization)
-	setEnum(source, target, NodePlacement, parseNodePlacement)
-	setEnum(source, target, NetworkSimplexRecomputeNodePlacement, parseNodePlacement)
-	setEnum(source, target, NetworkSimplexNodeFlexibility, parseNodeFlexibility)
-	setEnum(source, target, NetworkSimplexNodeFlexibilityDefault, parseNodeFlexibility)
-	setEnum(source, target, BKFixedAlignment, parseFixedAlignment)
-	setEnum(source, target, BKEdgeStraightening, parseEdgeStraightening)
-	setEnum(source, target, SplineRoutingModeOption, parseSplineRoutingMode)
-	setEnum(source, target, PostCompactionStrategy, parseGraphCompactionStrategy)
-	setEnum(source, target, PostCompactionConstraints, parseConstraintCalculationStrategy)
-	setEnum(source, target, NodePromotionStrategyOption, parseNodePromotionStrategy)
-	setEnum(source, target, PortSortingStrategyOption, parsePortSortingStrategy)
-	setEnum(source, target, WrappingStrategyOption, parseWrappingStrategy)
-	setEnum(source, target, WrappingCuttingStrategy, parseCuttingStrategy)
-	setEnum(source, target, WrappingValidifyStrategy, parseValidifyStrategy)
-	setEnum(source, target, ConsiderModelOrder, parseOrderingStrategy)
-	setEnum(source, target, ComponentOrdering, parseComponentOrderingStrategy)
-	setEnum(source, target, LongEdgeOrdering, parseLongEdgeOrderingStrategy)
-	setEnum(source, target, CycleBreakingGroupOrder, parseGroupOrderStrategy)
-	setEnum(source, target, CrossingMinimizationGroupOrder, parseGroupOrderStrategy)
-	setEnum(source, target, LayerUnzippingStrategyOption, parseLayerUnzippingStrategy)
-	setEnum(source, target, GreedySwitch, parseGreedySwitch)
-	setEnum(source, target, GreedySwitchHierarchical, parseGreedySwitch)
-	setEnum(source, target, LayerConstraintOption, parseLayerConstraint)
-	setEnum(source, target, InteractiveReferencePointOption, parseInteractiveReferencePoint)
-	setEnum(source, target, DirectionCongruencyOption, parseDirectionCongruency)
-	setEnum(source, target, EdgeLabelsPlacement, parseEdgeLabelPlacement)
-	setEnum(source, target, LabelSideOption, parseLabelSide)
-	setEnum(source, target, SelfLoopDistribution, parseSelfLoopDistribution)
-	setEnum(source, target, SelfLoopOrdering, parseSelfLoopOrdering)
-	setEnum(source, target, CenterEdgeLabelPlacement, parseCenterEdgeLabelPlacement)
-	setEnum(source, target, EdgeLabelSideSelectionOption, parseEdgeLabelSideSelection)
+	target.CopyFromConverting(source, typedPropertyConverters)
 
-	copyInt(source, target, RandomSeed)
-	copyInt(source, target, Thoroughness)
-	copyInt(source, target, CoffmanGrahamLayerBound)
-	copyInt(source, target, MinWidthUpperBound)
-	copyInt(source, target, MinWidthUpperLayerScaling)
-	copyInt(source, target, GreedySwitchActivationThreshold)
-	copyInt(source, target, PriorityDirection)
-	copyInt(source, target, PriorityShortness)
-	copyInt(source, target, PriorityStraightness)
-	copyInt(source, target, PortIndex)
-	copyInt(source, target, LayerIDOption)
-	copyInt(source, target, PositionIDOption)
-	copyInt(source, target, PositionChoiceConstraint)
-	copyInt(source, target, LayerChoiceConstraint)
-	copyInt(source, target, NodePromotionMaxIterations)
-	copyInt(source, target, HighDegreeNodeThreshold)
-	copyInt(source, target, HighDegreeNodeTreeHeight)
-	copyInt(source, target, LayerUnzippingLayerSplit)
-	copyInt(source, target, CycleBreakingGroupID)
-	copyInt(source, target, CrossingMinimizationGroupID)
-	copyInt(source, target, ComponentGroupID)
-	copyInt(source, target, CycleBreakingPreferredSourceID)
-	copyInt(source, target, CycleBreakingPreferredTargetID)
-	copyInt(source, target, WrappingCuttingMSDFreedom)
-	copyBool(source, target, NoLayout)
-	copyBool(source, target, SeparateComponents)
-	copyBool(source, target, EdgeLabelsInline)
-	copyBool(source, target, FavorStraightEdges)
-	copyBool(source, target, ForceNodeModelOrder)
-	copyBool(source, target, SemiInteractive)
-	copyBool(source, target, GeneratePositionAndLayerIDs)
-	copyBool(source, target, FeedbackEdges)
-	copyBool(source, target, MergeEdges)
-	copyBool(source, target, MergeHierarchyEdges)
-	copyBool(source, target, UnnecessaryBendpoints)
-	copyBool(source, target, NoModelOrder)
-	copyBool(source, target, PortModelOrder)
-	copyBool(source, target, LayerUnzippingMinimizeEdgeLength)
-	copyBool(source, target, LayerUnzippingResetOnLongEdges)
-	copyBool(source, target, HighDegreeNodeTreatment)
-	copyBool(source, target, WrappingMultiEdgeImproveCuts)
-	copyBool(source, target, WrappingMultiEdgeImproveWrappedEdges)
+	// elkjs accepts these historical non-layered identifiers as unique
+	// suffixes. The core codec preserves them exactly.
+	for _, alias := range typedFloatAliases {
+		if value, found := source.RawKey(alias.key); found {
+			if converted, ok := convertFloat(value); ok {
+				target.SetRawKey(alias.target, converted)
+			}
+		}
+	}
+}
 
+type propertyConverter = basegraph.PropertyConverter
+
+type floatAlias struct {
+	key, target basegraph.PropertyKey
+}
+
+var (
+	typedPropertyConverters = buildTypedPropertyConverters()
+	typedFloatAliases       = []floatAlias{
+		{basegraph.InternPropertyKey("org.eclipse.elk.spacing.nodeNodeBetweenLayers"), SpacingNodeNodeBetweenLayers.Key()},
+		{basegraph.InternPropertyKey("org.eclipse.elk.spacing.edgeNodeBetweenLayers"), SpacingEdgeNodeBetweenLayers.Key()},
+		{basegraph.InternPropertyKey("org.eclipse.elk.spacing.edgeEdgeBetweenLayers"), SpacingEdgeEdgeBetweenLayers.Key()},
+	}
+)
+
+// buildTypedPropertyConverters indexes the converters by PropertyKey. Every
+// key listed here was interned by its property's declaration, so keys interned
+// later can never need a converter.
+func buildTypedPropertyConverters() []propertyConverter {
+	var converters []propertyConverter
+	add := func(key basegraph.PropertyKey, convert propertyConverter) {
+		for int(key) >= len(converters) {
+			converters = append(converters, nil)
+		}
+		if converters[key] != nil {
+			panic("layered: duplicate typed property converter")
+		}
+		converters[key] = convert
+	}
+	addEnum(add, DirectionOption, ParseDirection)
+	addEnum(add, PortSideOption, ParsePortSide)
+	addEnum(add, Hierarchy, parseHierarchyHandling)
+	addEnum(add, PortConstraintsOption, parsePortConstraints)
+	addEnum(add, EdgeRoutingOption, parseEdgeRouting)
+	addEnum(add, AlignmentOption, parseAlignment)
+	addEnum(add, CycleBreaking, ParseCycleBreakingStrategy)
+	addEnum(add, Layering, ParseLayeringStrategy)
+	addEnum(add, CrossingMinimization, parseCrossingMinimization)
+	addEnum(add, NodePlacement, parseNodePlacement)
+	addEnum(add, NetworkSimplexRecomputeNodePlacement, parseNodePlacement)
+	addEnum(add, NetworkSimplexNodeFlexibility, parseNodeFlexibility)
+	addEnum(add, NetworkSimplexNodeFlexibilityDefault, parseNodeFlexibility)
+	addEnum(add, BKFixedAlignment, parseFixedAlignment)
+	addEnum(add, BKEdgeStraightening, parseEdgeStraightening)
+	addEnum(add, SplineRoutingModeOption, parseSplineRoutingMode)
+	addEnum(add, PostCompactionStrategy, parseGraphCompactionStrategy)
+	addEnum(add, PostCompactionConstraints, parseConstraintCalculationStrategy)
+	addEnum(add, NodePromotionStrategyOption, parseNodePromotionStrategy)
+	addEnum(add, PortSortingStrategyOption, parsePortSortingStrategy)
+	addEnum(add, WrappingStrategyOption, parseWrappingStrategy)
+	addEnum(add, WrappingCuttingStrategy, parseCuttingStrategy)
+	addEnum(add, WrappingValidifyStrategy, parseValidifyStrategy)
+	addEnum(add, ConsiderModelOrder, parseOrderingStrategy)
+	addEnum(add, ComponentOrdering, parseComponentOrderingStrategy)
+	addEnum(add, LongEdgeOrdering, parseLongEdgeOrderingStrategy)
+	addEnum(add, CycleBreakingGroupOrder, parseGroupOrderStrategy)
+	addEnum(add, CrossingMinimizationGroupOrder, parseGroupOrderStrategy)
+	addEnum(add, LayerUnzippingStrategyOption, parseLayerUnzippingStrategy)
+	addEnum(add, GreedySwitch, parseGreedySwitch)
+	addEnum(add, GreedySwitchHierarchical, parseGreedySwitch)
+	addEnum(add, LayerConstraintOption, parseLayerConstraint)
+	addEnum(add, InteractiveReferencePointOption, parseInteractiveReferencePoint)
+	addEnum(add, DirectionCongruencyOption, parseDirectionCongruency)
+	addEnum(add, EdgeLabelsPlacement, parseEdgeLabelPlacement)
+	addEnum(add, LabelSideOption, parseLabelSide)
+	addEnum(add, SelfLoopDistribution, parseSelfLoopDistribution)
+	addEnum(add, SelfLoopOrdering, parseSelfLoopOrdering)
+	addEnum(add, CenterEdgeLabelPlacement, parseCenterEdgeLabelPlacement)
+	addEnum(add, EdgeLabelSideSelectionOption, parseEdgeLabelSideSelection)
+
+	for _, property := range []*basegraph.Property[int]{
+		&RandomSeed, &Thoroughness, &CoffmanGrahamLayerBound, &MinWidthUpperBound,
+		&MinWidthUpperLayerScaling, &GreedySwitchActivationThreshold, &PriorityDirection,
+		&PriorityShortness, &PriorityStraightness, &PortIndex, &LayerIDOption,
+		&PositionIDOption, &PositionChoiceConstraint, &LayerChoiceConstraint,
+		&NodePromotionMaxIterations, &HighDegreeNodeThreshold, &HighDegreeNodeTreeHeight,
+		&LayerUnzippingLayerSplit, &CycleBreakingGroupID, &CrossingMinimizationGroupID,
+		&ComponentGroupID, &CycleBreakingPreferredSourceID, &CycleBreakingPreferredTargetID,
+		&WrappingCuttingMSDFreedom,
+	} {
+		add(property.Key(), convertInt)
+	}
+	for _, property := range []*basegraph.Property[bool]{
+		&NoLayout, &SeparateComponents, &EdgeLabelsInline, &FavorStraightEdges,
+		&ForceNodeModelOrder, &SemiInteractive, &GeneratePositionAndLayerIDs, &FeedbackEdges,
+		&MergeEdges, &MergeHierarchyEdges, &UnnecessaryBendpoints, &NoModelOrder,
+		&PortModelOrder, &LayerUnzippingMinimizeEdgeLength, &LayerUnzippingResetOnLongEdges,
+		&HighDegreeNodeTreatment, &WrappingMultiEdgeImproveCuts, &WrappingMultiEdgeImproveWrappedEdges,
+	} {
+		add(property.Key(), convertBool)
+	}
 	for _, property := range []*basegraph.Property[float64]{
 		&AspectRatio, &EdgeThickness, &PortBorderOffset,
 		&LinearSegmentsDeflectionDampening, &HierarchicalSweepiness,
@@ -118,108 +145,99 @@ func copyTypedProperties(target *basegraph.PropertyMap, source *basegraph.Proper
 		&WrappingMultiEdgeDistancePenalty,
 		&CrossingCounterNodeInfluence, &CrossingCounterPortInfluence,
 	} {
-		copyFloat(source, target, *property)
+		add(property.Key(), convertFloat)
 	}
-
-	// elkjs accepts these historical non-layered identifiers as unique
-	// suffixes. The core codec preserves them exactly.
-	copyFloatAlias(source, target, SpacingNodeNodeBetweenLayers,
-		"org.eclipse.elk.spacing.nodeNodeBetweenLayers")
-	copyFloatAlias(source, target, SpacingEdgeNodeBetweenLayers,
-		"org.eclipse.elk.spacing.edgeNodeBetweenLayers")
-	copyFloatAlias(source, target, SpacingEdgeEdgeBetweenLayers,
-		"org.eclipse.elk.spacing.edgeEdgeBetweenLayers")
+	return converters
 }
 
-func setEnum[T any](
-	source, target *basegraph.PropertyMap,
+// addEnum registers setEnum's conversion: a value of the enum type is kept,
+// anything else is parsed from its fmt.Sprint spelling.
+func addEnum[T any](
+	add func(basegraph.PropertyKey, propertyConverter),
 	property basegraph.Property[T],
 	parse func(string) (T, bool),
 ) {
-	value, found := source.Raw(property.ID)
-	if !found {
-		return
-	}
-	if typed, ok := value.(T); ok {
-		basegraph.Set(target, property, typed)
-		return
-	}
-	if parsed, ok := parse(fmt.Sprint(value)); ok {
-		basegraph.Set(target, property, parsed)
-	}
+	add(property.Key(), func(value any) (any, bool) {
+		if _, ok := value.(T); ok {
+			return value, true
+		}
+		text, isString := value.(string)
+		if !isString {
+			text = fmt.Sprint(value)
+		}
+		if parsed, ok := parse(text); ok {
+			return parsed, true
+		}
+		return nil, false
+	})
 }
 
-func copyInt(source, target *basegraph.PropertyMap, property basegraph.Property[int]) {
-	value, found := source.Raw(property.ID)
-	if !found {
-		return
-	}
+// convertInt is copyInt's conversion.
+func convertInt(value any) (any, bool) {
 	switch typed := value.(type) {
 	case int:
-		basegraph.Set(target, property, typed)
+		return value, true
 	case int32:
-		basegraph.Set(target, property, int(typed))
+		return int(typed), true
 	case int64:
-		basegraph.Set(target, property, int(typed))
+		return int(typed), true
 	case float64:
-		basegraph.Set(target, property, int(typed))
+		return int(typed), true
 	case string:
 		if parsed, err := strconv.Atoi(typed); err == nil {
-			basegraph.Set(target, property, parsed)
+			return parsed, true
 		}
 	}
+	return nil, false
 }
 
-func copyBool(source, target *basegraph.PropertyMap, property basegraph.Property[bool]) {
-	value, found := source.Raw(property.ID)
-	if !found {
-		return
-	}
+// convertBool is copyBool's conversion.
+func convertBool(value any) (any, bool) {
 	switch typed := value.(type) {
 	case bool:
-		basegraph.Set(target, property, typed)
+		return value, true
 	case string:
 		if parsed, err := strconv.ParseBool(typed); err == nil {
-			basegraph.Set(target, property, parsed)
+			return parsed, true
 		}
 	}
+	return nil, false
 }
 
-func copyFloat(source, target *basegraph.PropertyMap, property basegraph.Property[float64]) {
-	copyFloatAlias(source, target, property, property.ID)
-}
-
-func copyFloatAlias(source, target *basegraph.PropertyMap, property basegraph.Property[float64], id string) {
-	value, found := source.Raw(id)
-	if !found {
-		return
-	}
-	var result float64
+// convertFloat is copyFloatAlias's conversion.
+func convertFloat(value any) (any, bool) {
 	switch typed := value.(type) {
 	case float64:
-		result = typed
+		return value, true
 	case float32:
-		result = float64(typed)
+		return float64(typed), true
 	case int:
-		result = float64(typed)
+		return float64(typed), true
 	case int32:
-		result = float64(typed)
+		return float64(typed), true
 	case int64:
-		result = float64(typed)
+		return float64(typed), true
 	case string:
 		parsed, err := strconv.ParseFloat(typed, 64)
 		if err != nil {
-			return
+			return nil, false
 		}
-		result = parsed
-	default:
-		return
+		return parsed, true
 	}
-	basegraph.Set(target, property, result)
+	return nil, false
 }
 
 func parseHierarchyHandling(value string) (HierarchyHandling, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseHierarchyHandlingUpper(value); ok {
+		return parsed, true
+	}
+	return parseHierarchyHandlingUpper(strings.ToUpper(value))
+}
+
+func parseHierarchyHandlingUpper(value string) (HierarchyHandling, bool) {
+	switch value {
 	case "INHERIT":
 		return HierarchyInherit, true
 	case "INCLUDE_CHILDREN":
@@ -232,7 +250,16 @@ func parseHierarchyHandling(value string) (HierarchyHandling, bool) {
 }
 
 func parsePortConstraints(value string) (PortConstraints, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parsePortConstraintsUpper(value); ok {
+		return parsed, true
+	}
+	return parsePortConstraintsUpper(strings.ToUpper(value))
+}
+
+func parsePortConstraintsUpper(value string) (PortConstraints, bool) {
+	switch value {
 	case "UNDEFINED":
 		return PortConstraintsUndefined, true
 	case "FREE":
@@ -251,7 +278,16 @@ func parsePortConstraints(value string) (PortConstraints, bool) {
 }
 
 func parseEdgeRouting(value string) (EdgeRouting, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseEdgeRoutingUpper(value); ok {
+		return parsed, true
+	}
+	return parseEdgeRoutingUpper(strings.ToUpper(value))
+}
+
+func parseEdgeRoutingUpper(value string) (EdgeRouting, bool) {
+	switch value {
 	case "UNDEFINED":
 		return EdgeRoutingUndefined, true
 	case "POLYLINE":
@@ -266,7 +302,16 @@ func parseEdgeRouting(value string) (EdgeRouting, bool) {
 }
 
 func parseAlignment(value string) (Alignment, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseAlignmentUpper(value); ok {
+		return parsed, true
+	}
+	return parseAlignmentUpper(strings.ToUpper(value))
+}
+
+func parseAlignmentUpper(value string) (Alignment, bool) {
+	switch value {
 	case "AUTOMATIC":
 		return AlignmentAutomatic, true
 	case "LEFT":
@@ -285,7 +330,16 @@ func parseAlignment(value string) (Alignment, bool) {
 }
 
 func parseCrossingMinimization(value string) (CrossingMinimizationStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseCrossingMinimizationUpper(value); ok {
+		return parsed, true
+	}
+	return parseCrossingMinimizationUpper(strings.ToUpper(value))
+}
+
+func parseCrossingMinimizationUpper(value string) (CrossingMinimizationStrategy, bool) {
+	switch value {
 	case "LAYER_SWEEP":
 		return CrossingMinimizationLayerSweep, true
 	case "MEDIAN_LAYER_SWEEP":
@@ -300,7 +354,16 @@ func parseCrossingMinimization(value string) (CrossingMinimizationStrategy, bool
 }
 
 func parseNodePlacement(value string) (NodePlacementStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseNodePlacementUpper(value); ok {
+		return parsed, true
+	}
+	return parseNodePlacementUpper(strings.ToUpper(value))
+}
+
+func parseNodePlacementUpper(value string) (NodePlacementStrategy, bool) {
+	switch value {
 	case "SIMPLE":
 		return NodePlacementSimple, true
 	case "INTERACTIVE":
@@ -317,7 +380,16 @@ func parseNodePlacement(value string) (NodePlacementStrategy, bool) {
 }
 
 func parseNodeFlexibility(value string) (NodeFlexibility, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseNodeFlexibilityUpper(value); ok {
+		return parsed, true
+	}
+	return parseNodeFlexibilityUpper(strings.ToUpper(value))
+}
+
+func parseNodeFlexibilityUpper(value string) (NodeFlexibility, bool) {
+	switch value {
 	case "NONE":
 		return NodeFlexibilityNone, true
 	case "PORT_POSITION":
@@ -332,7 +404,16 @@ func parseNodeFlexibility(value string) (NodeFlexibility, bool) {
 }
 
 func parseInteractiveReferencePoint(value string) (InteractiveReferencePoint, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseInteractiveReferencePointUpper(value); ok {
+		return parsed, true
+	}
+	return parseInteractiveReferencePointUpper(strings.ToUpper(value))
+}
+
+func parseInteractiveReferencePointUpper(value string) (InteractiveReferencePoint, bool) {
+	switch value {
 	case "CENTER":
 		return InteractiveReferenceCenter, true
 	case "TOP_LEFT":
@@ -343,7 +424,16 @@ func parseInteractiveReferencePoint(value string) (InteractiveReferencePoint, bo
 }
 
 func parseFixedAlignment(value string) (FixedAlignment, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseFixedAlignmentUpper(value); ok {
+		return parsed, true
+	}
+	return parseFixedAlignmentUpper(strings.ToUpper(value))
+}
+
+func parseFixedAlignmentUpper(value string) (FixedAlignment, bool) {
+	switch value {
 	case "NONE":
 		return FixedAlignmentNone, true
 	case "LEFTUP":
@@ -362,7 +452,16 @@ func parseFixedAlignment(value string) (FixedAlignment, bool) {
 }
 
 func parseEdgeStraightening(value string) (EdgeStraighteningStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseEdgeStraighteningUpper(value); ok {
+		return parsed, true
+	}
+	return parseEdgeStraighteningUpper(strings.ToUpper(value))
+}
+
+func parseEdgeStraighteningUpper(value string) (EdgeStraighteningStrategy, bool) {
+	switch value {
 	case "NONE":
 		return EdgeStraighteningNone, true
 	case "IMPROVE_STRAIGHTNESS":
@@ -373,7 +472,16 @@ func parseEdgeStraightening(value string) (EdgeStraighteningStrategy, bool) {
 }
 
 func parseSplineRoutingMode(value string) (SplineRoutingMode, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseSplineRoutingModeUpper(value); ok {
+		return parsed, true
+	}
+	return parseSplineRoutingModeUpper(strings.ToUpper(value))
+}
+
+func parseSplineRoutingModeUpper(value string) (SplineRoutingMode, bool) {
+	switch value {
 	case "SLOPPY":
 		return SplineRoutingSloppy, true
 	case "CONSERVATIVE":
@@ -404,7 +512,16 @@ func parseGraphCompactionStrategy(value string) (GraphCompactionStrategy, bool) 
 }
 
 func parseConstraintCalculationStrategy(value string) (ConstraintCalculationStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseConstraintCalculationStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseConstraintCalculationStrategyUpper(strings.ToUpper(value))
+}
+
+func parseConstraintCalculationStrategyUpper(value string) (ConstraintCalculationStrategy, bool) {
+	switch value {
 	case "QUADRATIC":
 		return ConstraintCalculationQuadratic, true
 	case "SCANLINE":
@@ -436,7 +553,16 @@ func parseNodePromotionStrategy(value string) (NodePromotionStrategy, bool) {
 }
 
 func parsePortSortingStrategy(value string) (PortSortingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parsePortSortingStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parsePortSortingStrategyUpper(strings.ToUpper(value))
+}
+
+func parsePortSortingStrategyUpper(value string) (PortSortingStrategy, bool) {
+	switch value {
 	case "INPUT_ORDER":
 		return PortSortingInputOrder, true
 	case "PORT_DEGREE":
@@ -447,7 +573,16 @@ func parsePortSortingStrategy(value string) (PortSortingStrategy, bool) {
 }
 
 func parseWrappingStrategy(value string) (WrappingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseWrappingStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseWrappingStrategyUpper(strings.ToUpper(value))
+}
+
+func parseWrappingStrategyUpper(value string) (WrappingStrategy, bool) {
+	switch value {
 	case "OFF":
 		return WrappingOff, true
 	case "SINGLE_EDGE":
@@ -460,7 +595,16 @@ func parseWrappingStrategy(value string) (WrappingStrategy, bool) {
 }
 
 func parseCuttingStrategy(value string) (CuttingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseCuttingStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseCuttingStrategyUpper(strings.ToUpper(value))
+}
+
+func parseCuttingStrategyUpper(value string) (CuttingStrategy, bool) {
+	switch value {
 	case "ARD":
 		return CuttingARD, true
 	case "MSD":
@@ -473,7 +617,16 @@ func parseCuttingStrategy(value string) (CuttingStrategy, bool) {
 }
 
 func parseValidifyStrategy(value string) (ValidifyStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseValidifyStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseValidifyStrategyUpper(strings.ToUpper(value))
+}
+
+func parseValidifyStrategyUpper(value string) (ValidifyStrategy, bool) {
+	switch value {
 	case "NO":
 		return ValidifyNo, true
 	case "GREEDY":
@@ -486,7 +639,16 @@ func parseValidifyStrategy(value string) (ValidifyStrategy, bool) {
 }
 
 func parseOrderingStrategy(value string) (OrderingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseOrderingStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseOrderingStrategyUpper(strings.ToUpper(value))
+}
+
+func parseOrderingStrategyUpper(value string) (OrderingStrategy, bool) {
+	switch value {
 	case "NONE":
 		return OrderingNone, true
 	case "NODES_AND_EDGES":
@@ -501,7 +663,16 @@ func parseOrderingStrategy(value string) (OrderingStrategy, bool) {
 }
 
 func parseLongEdgeOrderingStrategy(value string) (LongEdgeOrderingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseLongEdgeOrderingStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseLongEdgeOrderingStrategyUpper(strings.ToUpper(value))
+}
+
+func parseLongEdgeOrderingStrategyUpper(value string) (LongEdgeOrderingStrategy, bool) {
+	switch value {
 	case "DUMMY_NODE_OVER":
 		return LongEdgeDummyNodeOver, true
 	case "DUMMY_NODE_UNDER":
@@ -514,7 +685,16 @@ func parseLongEdgeOrderingStrategy(value string) (LongEdgeOrderingStrategy, bool
 }
 
 func parseComponentOrderingStrategy(value string) (ComponentOrderingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseComponentOrderingStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseComponentOrderingStrategyUpper(strings.ToUpper(value))
+}
+
+func parseComponentOrderingStrategyUpper(value string) (ComponentOrderingStrategy, bool) {
+	switch value {
 	case "NONE":
 		return ComponentOrderingNone, true
 	case "INSIDE_PORT_SIDE_GROUPS":
@@ -529,7 +709,16 @@ func parseComponentOrderingStrategy(value string) (ComponentOrderingStrategy, bo
 }
 
 func parseGroupOrderStrategy(value string) (GroupOrderStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseGroupOrderStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseGroupOrderStrategyUpper(strings.ToUpper(value))
+}
+
+func parseGroupOrderStrategyUpper(value string) (GroupOrderStrategy, bool) {
+	switch value {
 	case "ONLY_WITHIN_GROUP":
 		return GroupOrderOnlyWithinGroup, true
 	case "MODEL_ORDER":
@@ -542,7 +731,16 @@ func parseGroupOrderStrategy(value string) (GroupOrderStrategy, bool) {
 }
 
 func parseLayerUnzippingStrategy(value string) (LayerUnzippingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseLayerUnzippingStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return parseLayerUnzippingStrategyUpper(strings.ToUpper(value))
+}
+
+func parseLayerUnzippingStrategyUpper(value string) (LayerUnzippingStrategy, bool) {
+	switch value {
 	case "NONE":
 		return LayerUnzippingNone, true
 	case "ALTERNATING":
@@ -553,7 +751,16 @@ func parseLayerUnzippingStrategy(value string) (LayerUnzippingStrategy, bool) {
 }
 
 func parseGreedySwitch(value string) (GreedySwitchType, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseGreedySwitchUpper(value); ok {
+		return parsed, true
+	}
+	return parseGreedySwitchUpper(strings.ToUpper(value))
+}
+
+func parseGreedySwitchUpper(value string) (GreedySwitchType, bool) {
+	switch value {
 	case "ONE_SIDED":
 		return GreedySwitchOneSided, true
 	case "TWO_SIDED":
@@ -566,7 +773,16 @@ func parseGreedySwitch(value string) (GreedySwitchType, bool) {
 }
 
 func parseLayerConstraint(value string) (LayerConstraint, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseLayerConstraintUpper(value); ok {
+		return parsed, true
+	}
+	return parseLayerConstraintUpper(strings.ToUpper(value))
+}
+
+func parseLayerConstraintUpper(value string) (LayerConstraint, bool) {
+	switch value {
 	case "NONE":
 		return LayerConstraintNone, true
 	case "FIRST":
@@ -583,7 +799,16 @@ func parseLayerConstraint(value string) (LayerConstraint, bool) {
 }
 
 func parseDirectionCongruency(value string) (DirectionCongruency, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseDirectionCongruencyUpper(value); ok {
+		return parsed, true
+	}
+	return parseDirectionCongruencyUpper(strings.ToUpper(value))
+}
+
+func parseDirectionCongruencyUpper(value string) (DirectionCongruency, bool) {
+	switch value {
 	case "READING_DIRECTION":
 		return DirectionCongruencyReading, true
 	case "ROTATION":
@@ -594,7 +819,16 @@ func parseDirectionCongruency(value string) (DirectionCongruency, bool) {
 }
 
 func parseEdgeLabelPlacement(value string) (EdgeLabelPlacement, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseEdgeLabelPlacementUpper(value); ok {
+		return parsed, true
+	}
+	return parseEdgeLabelPlacementUpper(strings.ToUpper(value))
+}
+
+func parseEdgeLabelPlacementUpper(value string) (EdgeLabelPlacement, bool) {
+	switch value {
 	case "CENTER":
 		return EdgeLabelPlacementCenter, true
 	case "HEAD":
@@ -607,7 +841,16 @@ func parseEdgeLabelPlacement(value string) (EdgeLabelPlacement, bool) {
 }
 
 func parseLabelSide(value string) (LabelSide, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseLabelSideUpper(value); ok {
+		return parsed, true
+	}
+	return parseLabelSideUpper(strings.ToUpper(value))
+}
+
+func parseLabelSideUpper(value string) (LabelSide, bool) {
+	switch value {
 	case "UNKNOWN":
 		return LabelSideUnknown, true
 	case "ABOVE":
@@ -622,7 +865,16 @@ func parseLabelSide(value string) (LabelSide, bool) {
 }
 
 func parseSelfLoopDistribution(value string) (SelfLoopDistributionStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseSelfLoopDistributionUpper(value); ok {
+		return parsed, true
+	}
+	return parseSelfLoopDistributionUpper(strings.ToUpper(value))
+}
+
+func parseSelfLoopDistributionUpper(value string) (SelfLoopDistributionStrategy, bool) {
+	switch value {
 	case "EQUALLY":
 		return SelfLoopDistributionEqually, true
 	case "NORTH":
@@ -635,7 +887,16 @@ func parseSelfLoopDistribution(value string) (SelfLoopDistributionStrategy, bool
 }
 
 func parseSelfLoopOrdering(value string) (SelfLoopOrderingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := parseSelfLoopOrderingUpper(value); ok {
+		return parsed, true
+	}
+	return parseSelfLoopOrderingUpper(strings.ToUpper(value))
+}
+
+func parseSelfLoopOrderingUpper(value string) (SelfLoopOrderingStrategy, bool) {
+	switch value {
 	case "STACKED":
 		return SelfLoopOrderingStacked, true
 	case "REVERSE_STACKED":

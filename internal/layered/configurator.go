@@ -44,13 +44,30 @@ func ConfigureGraphProperties(arena *LGraphArena, graphID LGraphID) {
 }
 
 func copyOriginalPortConstraints(arena *LGraphArena, graphID LGraphID) {
-	for _, nodeID := range arena.GraphAllNodes(graphID) {
-		constraints := basegraph.Get(&arena.Node(nodeID).Properties, PortConstraintsOption)
-		basegraph.Set(&arena.Node(nodeID).Properties, OriginalPortConstraints, constraints)
-		if arena.Node(nodeID).NestedGraph != nil {
-			copyOriginalPortConstraints(arena, *arena.Node(nodeID).NestedGraph)
+	// GraphAllNodes' order (layerless nodes, then the layers' nodes), walked
+	// in place: setting properties and recursing into nested graphs change
+	// none of this graph's lists. One function, so that a level of nesting
+	// costs one frame.
+	graph := arena.Graph(graphID)
+	for list := -1; list < len(graph.Layers); list++ {
+		nodes := graph.LayerlessNodes
+		if list >= 0 {
+			nodes = arena.Layer(graph.Layers[list]).Nodes
+		}
+		for _, nodeID := range nodes {
+			copyOriginalPortConstraint(arena, nodeID)
+			if arena.Node(nodeID).NestedGraph != nil {
+				copyOriginalPortConstraints(arena, *arena.Node(nodeID).NestedGraph)
+			}
 		}
 	}
+}
+
+// copyOriginalPortConstraint records nodeID's port constraints as its
+// original ones.
+func copyOriginalPortConstraint(arena *LGraphArena, nodeID LNodeID) {
+	constraints := basegraph.Get(&arena.Node(nodeID).Properties, PortConstraintsOption)
+	basegraph.Set(&arena.Node(nodeID).Properties, OriginalPortConstraints, constraints)
 }
 
 func BasePipelineConfiguration(arena *LGraphArena, graphID LGraphID) PipelineConfiguration {

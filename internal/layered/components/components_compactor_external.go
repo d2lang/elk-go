@@ -392,6 +392,9 @@ func (compaction *externalComponentsCompactor) createDummyNode(
 			"components: component %d has no usable external-port dummy", graphID)
 	}
 	dummyID := compaction.arena.AddNode(graphID)
+	// AddNode may move the node arena: re-fetch the external dummy (unchanged
+	// since it was read above).
+	external = compaction.arena.Node(externalID)
 	dummy := compaction.arena.Node(dummyID)
 	dummy.Size = geometry.Point{
 		X: math.Max(1, external.Size.X),

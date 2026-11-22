@@ -30,6 +30,13 @@ const (
 type routingDirectionStrategy struct {
 	direction             RoutingDirection
 	createdJunctionPoints map[geometry.Point]struct{}
+
+	// alloc, when set, hands out the segments and dependencies of one
+	// RouteEdges call (see segmentAlloc).
+	alloc *segmentAlloc
+
+	// portWalk holds addPortPositions' pending calls (emptied when used).
+	portWalk []portWalkFrame
 }
 
 func newRoutingDirectionStrategy(direction RoutingDirection) *routingDirectionStrategy {
@@ -207,6 +214,14 @@ func (strategy *routingDirectionStrategy) addJunctionPointIfNecessary(
 	}
 }
 
+// maxKeptJunctionPoints bounds the set whose storage clearCreatedJunctionPoints
+// keeps for the next call (a map's storage never shrinks).
+const maxKeptJunctionPoints = 1 << 10
+
 func (strategy *routingDirectionStrategy) clearCreatedJunctionPoints() {
+	if len(strategy.createdJunctionPoints) > maxKeptJunctionPoints {
+		strategy.createdJunctionPoints = make(map[geometry.Point]struct{})
+		return
+	}
 	clear(strategy.createdJunctionPoints)
 }

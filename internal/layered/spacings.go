@@ -108,6 +108,68 @@ func nodeSpacing(
 	return secondValue
 }
 
+// SpacingCache answers VerticalSpacing for nodes while neither the spacing
+// options of their graphs nor any node's individual spacings change: it reads
+// each graph-level spacing property of one graph once (those reads have no
+// effect on the graph: spacing properties are plain values with constant
+// defaults) and answers the rest exactly as VerticalSpacing does.
+type SpacingCache struct {
+	arena      *LGraphArena
+	graph      LGraphID
+	properties [8]*basegraph.Property[float64]
+	values     [8]float64
+	count      int
+}
+
+// BoundTo reports whether the cache answers for graphID of arena.
+func (cache *SpacingCache) BoundTo(arena *LGraphArena, graphID LGraphID) bool {
+	return cache.arena == arena && cache.graph == graphID
+}
+
+// Reset empties the cache and binds it to graphID.
+func (cache *SpacingCache) Reset(arena *LGraphArena, graphID LGraphID) {
+	*cache = SpacingCache{arena: arena, graph: graphID}
+}
+
+// Vertical is VerticalSpacing(arena, first, second).
+func (cache *SpacingCache) Vertical(first, second LNodeID) float64 {
+	arena := cache.arena
+	property := layeredSpacingTables().vertical[arena.Node(first).Type][arena.Node(second).Type]
+	if property == nil {
+		panic("layered: unspecified spacing between node types")
+	}
+	firstValue := cache.individualOrDefault(first, property)
+	secondValue := cache.individualOrDefault(second, property)
+	if firstValue > secondValue {
+		return firstValue
+	}
+	return secondValue
+}
+
+func (cache *SpacingCache) individualOrDefault(nodeID LNodeID, property *basegraph.Property[float64]) float64 {
+	arena := cache.arena
+	if individual, found := basegraph.TryGet(&arena.Node(nodeID).Properties, SpacingIndividual); found {
+		if value, explicit := basegraph.TryGet(&individual.Properties, *property); explicit {
+			return value
+		}
+	}
+	graphID := arena.NodeGraph(nodeID)
+	if graphID != cache.graph {
+		return basegraph.Get(&arena.Graph(graphID).Properties, *property)
+	}
+	for index := 0; index < cache.count; index++ {
+		if cache.properties[index] == property {
+			return cache.values[index]
+		}
+	}
+	value := basegraph.Get(&arena.Graph(graphID).Properties, *property)
+	if cache.count < len(cache.properties) {
+		cache.properties[cache.count], cache.values[cache.count] = property, value
+		cache.count++
+	}
+	return value
+}
+
 func HorizontalSpacing(arena *LGraphArena, first, second LNodeID) float64 {
 	return nodeSpacing(arena, first, second, &layeredSpacingTables().horizontal)
 }

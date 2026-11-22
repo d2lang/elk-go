@@ -10,9 +10,9 @@ package intermediate
 
 import (
 	"fmt"
-	"sort"
 
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 	"github.com/d2lang/elk-go/internal/layered"
 )
 
@@ -20,13 +20,16 @@ import (
 // northern port. Sort stability intentionally preserves model order on ties.
 func SortPortLists(arena *layered.LGraphArena, graphID layered.LGraphID) error {
 	strategy := basegraph.Get(&arena.Graph(graphID).Properties, layered.PortSortingStrategyOption)
-	for _, nodeID := range arena.GraphAllNodes(graphID) {
+	// Sorting ports neither calls GraphAllNodesScratch nor changes node lists.
+	for _, nodeID := range arena.GraphAllNodesScratch(graphID) {
 		node := arena.Node(nodeID)
 		constraints := basegraph.Get(&node.Properties, layered.PortConstraintsOption)
 		if constraints.IsOrderFixed() {
 			var sortErr error
-			sort.SliceStable(node.Ports, func(firstIndex, secondIndex int) bool {
-				comparison, err := compareFixedPorts(arena, node.Ports[firstIndex], node.Ports[secondIndex])
+			// GoStableSort is sort.SliceStable without reflection: the same
+			// comparisons on the same elements, the same permutation.
+			javacompat.GoStableSort(node.Ports, func(firstPort, secondPort layered.LPortID) bool {
+				comparison, err := compareFixedPorts(arena, firstPort, secondPort)
 				if err != nil {
 					sortErr = err
 					return false
@@ -37,24 +40,24 @@ func SortPortLists(arena *layered.LGraphArena, graphID layered.LGraphID) error {
 				return sortErr
 			}
 		} else if constraints.IsSideFixed() {
-			sort.SliceStable(node.Ports, func(firstIndex, secondIndex int) bool {
-				return arena.Port(node.Ports[firstIndex]).Side < arena.Port(node.Ports[secondIndex]).Side
+			javacompat.GoStableSort(node.Ports, func(firstPort, secondPort layered.LPortID) bool {
+				return arena.Port(firstPort).Side < arena.Port(secondPort).Side
 			})
 			reversePortSide(arena, node.Ports, layered.SouthSide)
 			reversePortSide(arena, node.Ports, layered.WestSide)
 			if strategy == layered.PortSortingPortDegree {
-				sort.SliceStable(node.Ports, func(firstIndex, secondIndex int) bool {
-					first, second := arena.Port(node.Ports[firstIndex]), arena.Port(node.Ports[secondIndex])
+				javacompat.GoStableSort(node.Ports, func(firstPort, secondPort layered.LPortID) bool {
+					first, second := arena.Port(firstPort), arena.Port(secondPort)
 					if first.Side != second.Side {
 						return false
 					}
 					switch first.Side {
 					case layered.EastSide:
-						return realPortDegree(arena, node.Ports[firstIndex], false) >
-							realPortDegree(arena, node.Ports[secondIndex], false)
+						return realPortDegree(arena, firstPort, false) >
+							realPortDegree(arena, secondPort, false)
 					case layered.WestSide:
-						return realPortDegree(arena, node.Ports[firstIndex], true) <
-							realPortDegree(arena, node.Ports[secondIndex], true)
+						return realPortDegree(arena, firstPort, true) <
+							realPortDegree(arena, secondPort, true)
 					default:
 						return false
 					}

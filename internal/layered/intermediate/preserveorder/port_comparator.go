@@ -18,8 +18,7 @@ type PortComparator struct {
 	Ordering             layered.OrderingStrategy
 	TargetNodeModelOrder map[layered.LNodeID]int
 	PortModelOrder       bool
-	BiggerThan           map[layered.LPortID]map[layered.LPortID]struct{}
-	SmallerThan          map[layered.LPortID]map[layered.LPortID]struct{}
+	order                TransitiveOrder[layered.LPortID]
 }
 
 func NewPortComparator(
@@ -35,8 +34,25 @@ func NewPortComparator(
 		Ordering:             ordering,
 		TargetNodeModelOrder: targetNodeModelOrder,
 		PortModelOrder:       portModelOrder,
-		BiggerThan:           make(map[layered.LPortID]map[layered.LPortID]struct{}),
-		SmallerThan:          make(map[layered.LPortID]map[layered.LPortID]struct{}),
+	}
+}
+
+// NewPortComparatorSharing is NewPortComparator keeping previousLayer itself
+// instead of a copy; the caller must not change it while the comparator is
+// used.
+func NewPortComparatorSharing(
+	arena *layered.LGraphArena,
+	previousLayer []layered.LNodeID,
+	ordering layered.OrderingStrategy,
+	targetNodeModelOrder map[layered.LNodeID]int,
+	portModelOrder bool,
+) *PortComparator {
+	return &PortComparator{
+		Arena:                arena,
+		PreviousLayer:        previousLayer,
+		Ordering:             ordering,
+		TargetNodeModelOrder: targetNodeModelOrder,
+		PortModelOrder:       portModelOrder,
 	}
 }
 
@@ -247,28 +263,7 @@ func (comparator *PortComparator) Compare(firstID, secondID layered.LPortID) int
 func (comparator *PortComparator) initializeAndRecall(
 	first, second layered.LPortID,
 ) int {
-	if _, found := comparator.BiggerThan[first]; !found {
-		comparator.BiggerThan[first] = make(map[layered.LPortID]struct{})
-	} else if containsPort(comparator.BiggerThan[first], second) {
-		return 1
-	}
-	if _, found := comparator.BiggerThan[second]; !found {
-		comparator.BiggerThan[second] = make(map[layered.LPortID]struct{})
-	} else if containsPort(comparator.BiggerThan[second], first) {
-		return -1
-	}
-	if _, found := comparator.SmallerThan[first]; !found {
-		comparator.SmallerThan[first] = make(map[layered.LPortID]struct{})
-	} else if containsPort(comparator.SmallerThan[first], second) {
-		return -1
-	}
-	if _, found := comparator.SmallerThan[second]; !found {
-		comparator.SmallerThan[second] = make(map[layered.LPortID]struct{})
-	} else if containsPort(comparator.BiggerThan[second], first) {
-		// Preserve the source comparator's second biggerThan lookup.
-		return 1
-	}
-	return 0
+	return comparator.order.Recall(first, second)
 }
 
 func (comparator *PortComparator) checkPortModelOrder(
@@ -303,39 +298,7 @@ func (comparator *PortComparator) update(
 	if reverseOrder < 0 {
 		bigger, smaller = smallerOriginal, biggerOriginal
 	}
-	comparator.ensureOrderingEntry(bigger)
-	comparator.ensureOrderingEntry(smaller)
-	biggerPortBiggerThan := comparator.BiggerThan[bigger]
-	smallerPortBiggerThan := comparator.BiggerThan[smaller]
-	biggerPortSmallerThan := comparator.SmallerThan[bigger]
-	smallerPortSmallerThan := comparator.SmallerThan[smaller]
-	biggerPortBiggerThan[smaller] = struct{}{}
-	smallerPortSmallerThan[bigger] = struct{}{}
-	for verySmall := range smallerPortBiggerThan {
-		comparator.ensureOrderingEntry(verySmall)
-		biggerPortBiggerThan[verySmall] = struct{}{}
-		comparator.SmallerThan[verySmall][bigger] = struct{}{}
-		for veryBig := range biggerPortSmallerThan {
-			comparator.SmallerThan[verySmall][veryBig] = struct{}{}
-		}
-	}
-	for veryBig := range biggerPortSmallerThan {
-		comparator.ensureOrderingEntry(veryBig)
-		smallerPortSmallerThan[veryBig] = struct{}{}
-		comparator.BiggerThan[veryBig][smaller] = struct{}{}
-		for verySmall := range smallerPortBiggerThan {
-			comparator.BiggerThan[veryBig][verySmall] = struct{}{}
-		}
-	}
-}
-
-func (comparator *PortComparator) ensureOrderingEntry(port layered.LPortID) {
-	if comparator.BiggerThan[port] == nil {
-		comparator.BiggerThan[port] = make(map[layered.LPortID]struct{})
-	}
-	if comparator.SmallerThan[port] == nil {
-		comparator.SmallerThan[port] = make(map[layered.LPortID]struct{})
-	}
+	comparator.order.Update(bigger, smaller)
 }
 
 func (comparator *PortComparator) checkReferenceLayer(
@@ -354,11 +317,5 @@ func (comparator *PortComparator) checkReferenceLayer(
 }
 
 func (comparator *PortComparator) ClearTransitiveOrdering() {
-	comparator.BiggerThan = make(map[layered.LPortID]map[layered.LPortID]struct{})
-	comparator.SmallerThan = make(map[layered.LPortID]map[layered.LPortID]struct{})
-}
-
-func containsPort(values map[layered.LPortID]struct{}, port layered.LPortID) bool {
-	_, found := values[port]
-	return found
+	comparator.order.Clear()
 }

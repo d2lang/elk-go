@@ -85,7 +85,7 @@ func createLabelDummy(
 	dummyID := arena.AddNode(graphID)
 	dummy := arena.Node(dummyID)
 	dummy.Type = layered.LabelNode
-	basegraph.Set(&dummy.Properties, layered.OriginalElement, layered.LEdgeOrigin(edgeID))
+	arena.SetOrigin(&dummy.Properties, layered.LEdgeOrigin(edgeID))
 	basegraph.Set(&dummy.Properties, layered.PortConstraintsOption, layered.PortConstraintsFixedPosition)
 	basegraph.Set(&dummy.Properties, layered.LongEdgeSource, *arena.Edge(edgeID).Source)
 	basegraph.Set(&dummy.Properties, layered.LongEdgeTarget, *arena.Edge(edgeID).Target)

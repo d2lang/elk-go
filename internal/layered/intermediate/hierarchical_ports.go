@@ -278,8 +278,11 @@ func positionHierarchyLayerPorts(
 // and external-port positions to the compound node that owns it.
 func ResizeHierarchicalNode(arena *layered.LGraphArena, graphID layered.LGraphID) error {
 	graph := arena.Graph(graphID)
-	for _, layerID := range append([]layered.LayerID(nil), graph.Layers...) {
-		nodes := append([]layered.LNodeID(nil), arena.Layer(layerID).Nodes...)
+	// Neither the layer list nor a layer's node list changes in the loop (a
+	// layer's list is dropped from the layer and then only read here), so
+	// they are walked without copies.
+	for _, layerID := range graph.Layers {
+		nodes := arena.Layer(layerID).Nodes
 		graph.LayerlessNodes = append(graph.LayerlessNodes, nodes...)
 		arena.Layer(layerID).Nodes = nil
 		for _, nodeID := range nodes {

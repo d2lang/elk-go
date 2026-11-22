@@ -55,7 +55,7 @@ func createLongEdgeDummy(
 	dummyID := arena.AddNode(graphID)
 	dummy := arena.Node(dummyID)
 	dummy.Type = layered.LongEdgeNode
-	basegraph.Set(&dummy.Properties, layered.OriginalElement, layered.LEdgeOrigin(edgeID))
+	arena.SetOrigin(&dummy.Properties, layered.LEdgeOrigin(edgeID))
 	basegraph.Set(&dummy.Properties, layered.PortConstraintsOption, layered.PortConstraintsFixedPosition)
 	arena.SetNodeLayer(dummyID, &layerID)
 	return dummyID
@@ -93,7 +93,9 @@ func SplitEdgeAtDummy(
 	arena.SetEdgeTarget(edgeID, &input)
 	dummyEdgeID := arena.AddEdge()
 	dummyEdge := arena.Edge(dummyEdgeID)
-	dummyEdge.Properties.CopyFrom(&edge.Properties)
+	// AddEdge may move the edge arena; re-fetch the original edge (nothing
+	// wrote it since the move, so this reads the same properties).
+	dummyEdge.Properties.CopyFrom(&arena.Edge(edgeID).Properties)
 	basegraph.Unset(&dummyEdge.Properties, layered.JunctionPoints)
 	arena.SetEdgeSource(dummyEdgeID, &output)
 	arena.SetEdgeTarget(dummyEdgeID, &oldTarget)

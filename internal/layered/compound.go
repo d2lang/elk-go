@@ -13,11 +13,11 @@ package layered
 import (
 	"fmt"
 	"math"
-	"sort"
 
 	"github.com/d2lang/elk-go/internal/core"
 	"github.com/d2lang/elk-go/internal/geometry"
 	basegraph "github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 )
 
 // CrossHierarchyEdge is one per-hierarchy-level replacement segment of an
@@ -108,10 +108,24 @@ type compoundPortDummyOrder struct {
 // post-order insertion order. Descendant boundary ports precede ports on the
 // compound node itself; siblings retain node, port, and edge model order.
 func reorderCompoundPortDummies(arena *LGraphArena, graphID LGraphID) {
-	for _, nodeID := range append([]LNodeID(nil), arena.Graph(graphID).LayerlessNodes...) {
+	// The recursion only assigns new lists to the nested graphs, so this
+	// graph's list is walked in place.
+	externalPorts := 0
+	for _, nodeID := range arena.Graph(graphID).LayerlessNodes {
 		if nested := arena.Node(nodeID).NestedGraph; nested != nil {
 			reorderCompoundPortDummies(arena, *nested)
 		}
+	}
+	for _, nodeID := range arena.Graph(graphID).LayerlessNodes {
+		if arena.Node(nodeID).Type == ExternalPortNode {
+			externalPorts++
+		}
+	}
+	// With fewer than two dummies nothing below changes anything: the keys
+	// are computed by reading only, and the list is replaced only when at
+	// least two dummies are sorted.
+	if externalPorts < 2 {
+		return
 	}
 
 	nodes := append([]LNodeID(nil), arena.Graph(graphID).LayerlessNodes...)
@@ -143,8 +157,9 @@ func reorderCompoundPortDummies(arena *LGraphArena, graphID LGraphID) {
 	if len(dummies) < 2 {
 		return
 	}
-	sort.SliceStable(dummies, func(first, second int) bool {
-		left, right := dummies[first], dummies[second]
+	// GoStableSort is sort.SliceStable without reflection (same comparisons,
+	// same permutation).
+	javacompat.GoStableSort(dummies, func(left, right compoundPortDummyOrder) bool {
 		if left.connected != right.connected {
 			return left.connected
 		}
@@ -191,27 +206,97 @@ func compoundDummyInsideEndpoint(
 	return 0, 0, false
 }
 
+// compoundInsideTraversalKey follows portID's dummy chain into nested
+// graphs: the indexes of the nodes met in their graphs, and the index of the
+// last port in its node (math.MaxInt for a port without node). ELK's
+// recursion over the nesting levels is a loop here (each level appended in
+// the order the recursion's results were concatenated), so deep nesting needs
+// no deeper call stack; the reads happen in the recursion's order. Levels
+// beyond maxTraversalKeyLoop are followed by ELK's recursion itself: a chain
+// that leads back to itself never ends, and the original then recurses until
+// the goroutine stack overflows (a fatal error), which the loop must not
+// replace by a path growing until memory runs out.
 func compoundInsideTraversalKey(
 	arena *LGraphArena,
 	graphID LGraphID,
 	portID LPortID,
 ) ([]int, int) {
+	var path []int
+	for level := 0; ; level++ {
+		if level == maxTraversalKeyLoop {
+			deeper := path
+			terminal := compoundInsideTraversalKeyRecursive(arena, graphID, portID, &deeper)
+			return deeper, terminal
+		}
+		port := arena.Port(portID)
+		if port.Node == nil {
+			return path, math.MaxInt
+		}
+		nodeID := *port.Node
+		path = append(path, graphNodeIndex(arena, graphID, nodeID))
+		node := arena.Node(nodeID)
+		if node.NestedGraph != nil {
+			if dummyID, found := basegraph.TryGet(&port.Properties, PortDummy); found {
+				if nextPort, _, connected := compoundDummyInsideEndpoint(arena, dummyID); connected {
+					graphID, portID = *node.NestedGraph, nextPort
+					continue
+				}
+			}
+		}
+		return path, nodePortIndex(arena, nodeID, portID)
+	}
+}
+
+// maxTraversalKeyLoop bounds the levels compoundInsideTraversalKey follows in
+// its loop (a variable for tests).
+var maxTraversalKeyLoop = 1 << 16
+
+// compoundInsideTraversalKeyRecursive is ELK's recursion of
+// compoundInsideTraversalKey, appending to *path the indexes the original
+// concatenates (the same values in the same order; nil stays nil). One
+// level's reads (in the original's order) and its append are made by
+// compoundInsideStep, so that the recursion's frame stays below the
+// original's.
+func compoundInsideTraversalKeyRecursive(
+	arena *LGraphArena,
+	graphID LGraphID,
+	portID LPortID,
+	path *[]int,
+) int {
+	nested, next, terminal, more := compoundInsideStep(arena, graphID, portID, path)
+	if more {
+		return compoundInsideTraversalKeyRecursive(arena, nested, next, path)
+	}
+	return terminal
+}
+
+// compoundInsideStep is one level of the traversal key: for a port with a
+// node it appends the node's index in graphID to *path and returns either the
+// nested graph and port the chain continues with (more) or the port's index
+// in its node; for a port without node it returns math.MaxInt.
+//
+//go:noinline
+func compoundInsideStep(
+	arena *LGraphArena,
+	graphID LGraphID,
+	portID LPortID,
+	path *[]int,
+) (nested LGraphID, next LPortID, terminal int, more bool) {
 	port := arena.Port(portID)
 	if port.Node == nil {
-		return nil, math.MaxInt
+		return 0, 0, math.MaxInt, false
 	}
 	nodeID := *port.Node
-	path := []int{graphNodeIndex(arena, graphID, nodeID)}
+	*path = append(*path, graphNodeIndex(arena, graphID, nodeID))
 	node := arena.Node(nodeID)
 	if node.NestedGraph != nil {
 		if dummyID, found := basegraph.TryGet(&port.Properties, PortDummy); found {
 			if nextPort, _, connected := compoundDummyInsideEndpoint(arena, dummyID); connected {
-				nestedPath, terminalPort := compoundInsideTraversalKey(arena, *node.NestedGraph, nextPort)
-				return append(path, nestedPath...), terminalPort
+				return *node.NestedGraph, nextPort, 0, true
 			}
 		}
 	}
-	return path, nodePortIndex(arena, nodeID, portID)
+	return 0, 0, nodePortIndex(arena, nodeID, portID), false
 }
 
 func graphNodeIndex(arena *LGraphArena, graphID LGraphID, wanted LNodeID) int {
@@ -312,7 +397,7 @@ func createUnconnectedExternalPortDummy(
 		direction,
 		childGraph,
 	)
-	basegraph.Set(&arena.Node(dummy).Properties, OriginalElement, LPortOrigin(portID))
+	arena.SetOrigin(&arena.Node(dummy).Properties, LPortOrigin(portID))
 	arena.Graph(childGraph).LayerlessNodes = append(arena.Graph(childGraph).LayerlessNodes, dummy)
 
 	// Dummy port labels reserve the same space as the compound node's ports.
@@ -483,7 +568,7 @@ func boundaryPort(
 	basegraph.Set(&arena.Port(portID).Properties, PortSideOption, side)
 	basegraph.Set(&arena.Port(portID).Properties, PortBorderOffset,
 		basegraph.Get(&arena.Graph(childGraph).Properties, SpacingEdgeEdge)/2)
-	basegraph.Set(&arena.Port(portID).Properties, OriginalElement, LEdgeOrigin(original))
+	arena.SetOrigin(&arena.Port(portID).Properties, LEdgeOrigin(original))
 	return portID
 }
 
@@ -528,7 +613,7 @@ func externalDummyForBoundary(
 	direction := basegraph.Get(&arena.Graph(childGraph).Properties, DirectionOption)
 	dummy := arena.CreateExternalPortDummy(&properties, constraints, port.Side,
 		netFlow, &nodeSize, &position, port.Size, direction, childGraph)
-	basegraph.Set(&arena.Node(dummy).Properties, OriginalElement, LPortOrigin(boundary))
+	arena.SetOrigin(&arena.Node(dummy).Properties, LPortOrigin(boundary))
 	arena.Graph(childGraph).LayerlessNodes = append(arena.Graph(childGraph).LayerlessNodes, dummy)
 	port = arena.Port(boundary)
 	basegraph.Set(&port.Properties, PortDummy, dummy)
@@ -678,8 +763,7 @@ func shallowestHierarchySegment(segments []CrossHierarchyEdge) int {
 }
 
 func sortHierarchySegments(arena *LGraphArena, segments []CrossHierarchyEdge, top LGraphID) {
-	sort.SliceStable(segments, func(first, second int) bool {
-		left, right := segments[first], segments[second]
+	javacompat.GoStableSort(segments, func(left, right CrossHierarchyEdge) bool {
 		if left.PortType == PortTypeOutput && right.PortType == PortTypeInput {
 			return true
 		}

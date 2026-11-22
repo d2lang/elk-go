@@ -446,7 +446,7 @@ var (
 	Algorithm             = basegraph.PropertyWithDefault("org.eclipse.elk.algorithm", func() string { return "layered" })
 	DirectionOption       = basegraph.PropertyWithDefault("org.eclipse.elk.direction", func() Direction { return DirectionUndefined })
 	Hierarchy             = basegraph.PropertyWithDefault("org.eclipse.elk.hierarchyHandling", func() HierarchyHandling { return HierarchySeparateChildren })
-	Padding               = basegraph.CloneablePropertyWithDefault("org.eclipse.elk.padding", func() geometry.Spacing { return geometry.UniformSpacing(12) })
+	Padding               = basegraph.CloneablePropertyWithConstantDefault("org.eclipse.elk.padding", func() geometry.Spacing { return geometry.UniformSpacing(12) })
 	PortSideOption        = basegraph.PropertyWithDefault("org.eclipse.elk.port.side", func() PortSide { return UndefinedSide })
 	PortConstraintsOption = basegraph.PropertyWithDefault("org.eclipse.elk.portConstraints", func() PortConstraints { return PortConstraintsUndefined })
 	PortBorderOffset      = basegraph.PropertyWithDefault("org.eclipse.elk.port.borderOffset", func() float64 { return 0 })
@@ -459,10 +459,10 @@ var (
 	AspectRatio           = basegraph.PropertyWithDefault("org.eclipse.elk.aspectRatio", func() float64 { return 1.6 })
 	AlignmentOption       = basegraph.PropertyWithDefault("org.eclipse.elk.alignment", func() Alignment { return AlignmentAutomatic })
 	PositionOption        = basegraph.NewProperty[geometry.Point]("org.eclipse.elk.position")
-	NodeSizeMinimum       = basegraph.CloneablePropertyWithDefault("org.eclipse.elk.nodeSize.minimum", func() geometry.Point { return geometry.Point{} })
-	NodeSizeConstraints   = basegraph.CloneablePropertyWithDefault("org.eclipse.elk.nodeSize.constraints", func() []string { return nil })
-	ContentAlignment      = basegraph.CloneablePropertyWithDefault("org.eclipse.elk.contentAlignment", func() []string { return []string{"V_TOP", "H_LEFT"} })
-	NodeLabelsPadding     = basegraph.CloneablePropertyWithDefault("org.eclipse.elk.nodeLabels.padding", func() geometry.Spacing { return geometry.UniformSpacing(5) })
+	NodeSizeMinimum       = basegraph.CloneablePropertyWithConstantDefault("org.eclipse.elk.nodeSize.minimum", func() geometry.Point { return geometry.Point{} })
+	NodeSizeConstraints   = basegraph.CloneablePropertyWithConstantDefault("org.eclipse.elk.nodeSize.constraints", func() []string { return nil })
+	ContentAlignment      = basegraph.CloneablePropertyWithConstantDefault("org.eclipse.elk.contentAlignment", func() []string { return []string{"V_TOP", "H_LEFT"} })
+	NodeLabelsPadding     = basegraph.CloneablePropertyWithConstantDefault("org.eclipse.elk.nodeLabels.padding", func() geometry.Spacing { return geometry.UniformSpacing(5) })
 	EdgeLabelsInline      = basegraph.PropertyWithDefault("org.eclipse.elk.edgeLabels.inline", func() bool { return false })
 	EdgeLabelsPlacement   = basegraph.PropertyWithDefault("org.eclipse.elk.edgeLabels.placement", func() EdgeLabelPlacement { return EdgeLabelPlacementCenter })
 	LabelSideOption       = basegraph.PropertyWithDefault("org.eclipse.elk.labelSide", func() LabelSide { return LabelSideUnknown })
@@ -570,7 +570,7 @@ var (
 	SpacingNodeNode              = basegraph.PropertyWithDefault("org.eclipse.elk.spacing.nodeNode", func() float64 { return 20 })
 	SpacingNodeSelfLoop          = basegraph.PropertyWithDefault("org.eclipse.elk.spacing.nodeSelfLoop", func() float64 { return 10 })
 	SpacingPortPort              = basegraph.PropertyWithDefault("org.eclipse.elk.spacing.portPort", func() float64 { return 10 })
-	SpacingPortsSurrounding      = basegraph.CloneablePropertyWithDefault("org.eclipse.elk.spacing.portsSurrounding", func() geometry.Spacing { return geometry.Spacing{} })
+	SpacingPortsSurrounding      = basegraph.CloneablePropertyWithConstantDefault("org.eclipse.elk.spacing.portsSurrounding", func() geometry.Spacing { return geometry.Spacing{} })
 	SpacingBaseValue             = basegraph.NewProperty[float64]("org.eclipse.elk.layered.spacing.baseValue")
 	SpacingEdgeNodeBetweenLayers = basegraph.PropertyWithDefault("org.eclipse.elk.layered.spacing.edgeNodeBetweenLayers", func() float64 { return 10 })
 	SpacingEdgeEdgeBetweenLayers = basegraph.PropertyWithDefault("org.eclipse.elk.layered.spacing.edgeEdgeBetweenLayers", func() float64 { return 10 })
@@ -580,7 +580,16 @@ var (
 // Parse helpers keep the importer explicit and avoid relying on Go map or
 // reflection behavior for option identity.
 func ParseDirection(value string) (Direction, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := ParseDirectionUpper(value); ok {
+		return parsed, true
+	}
+	return ParseDirectionUpper(strings.ToUpper(value))
+}
+
+func ParseDirectionUpper(value string) (Direction, bool) {
+	switch value {
 	case "UNDEFINED":
 		return DirectionUndefined, true
 	case "RIGHT":
@@ -597,7 +606,16 @@ func ParseDirection(value string) (Direction, bool) {
 }
 
 func ParsePortSide(value string) (PortSide, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := ParsePortSideUpper(value); ok {
+		return parsed, true
+	}
+	return ParsePortSideUpper(strings.ToUpper(value))
+}
+
+func ParsePortSideUpper(value string) (PortSide, bool) {
+	switch value {
 	case "UNDEFINED":
 		return UndefinedSide, true
 	case "NORTH":
@@ -614,7 +632,16 @@ func ParsePortSide(value string) (PortSide, bool) {
 }
 
 func ParseCycleBreakingStrategy(value string) (CycleBreakingStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := ParseCycleBreakingStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return ParseCycleBreakingStrategyUpper(strings.ToUpper(value))
+}
+
+func ParseCycleBreakingStrategyUpper(value string) (CycleBreakingStrategy, bool) {
+	switch value {
 	case "GREEDY":
 		return CycleBreakingGreedy, true
 	case "DEPTH_FIRST":
@@ -639,7 +666,16 @@ func ParseCycleBreakingStrategy(value string) (CycleBreakingStrategy, bool) {
 }
 
 func ParseLayeringStrategy(value string) (LayeringStrategy, bool) {
-	switch strings.ToUpper(value) {
+	// An upper-case spelling matches as it is (strings.ToUpper would
+	// return it unchanged); anything else is upper-cased first.
+	if parsed, ok := ParseLayeringStrategyUpper(value); ok {
+		return parsed, true
+	}
+	return ParseLayeringStrategyUpper(strings.ToUpper(value))
+}
+
+func ParseLayeringStrategyUpper(value string) (LayeringStrategy, bool) {
+	switch value {
 	case "NETWORK_SIMPLEX":
 		return LayeringNetworkSimplex, true
 	case "LONGEST_PATH":

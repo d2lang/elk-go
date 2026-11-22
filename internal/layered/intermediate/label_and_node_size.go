@@ -30,7 +30,100 @@ import (
 // the source algorithm's size, margin, spacing, border-offset, and alignment
 // arithmetic for non-zero ports.
 func ProcessLabelAndNodeSizes(arena *layered.LGraphArena, graphID layered.LGraphID) {
-	for _, nodeID := range arena.GraphAllNodes(graphID) {
+	// Nothing below adds, removes or moves nodes, so the node lists are
+	// walked in place (layerless nodes first, then layer by layer, which is
+	// GraphAllNodes' order).
+	context := labelSizeContext{arena: arena, graphID: graphID}
+	context.processNodes(arena.Graph(graphID).LayerlessNodes)
+	for _, layerID := range arena.Graph(graphID).Layers {
+		context.processNodes(arena.Layer(layerID).Nodes)
+	}
+}
+
+// labelSizeContext holds what ProcessLabelAndNodeSizes reads once per graph:
+// the graph's direction and its spacing and node-label padding options, each
+// read when first needed (exactly where the processor first read it, so a
+// materialised default appears at the same point) and reused afterwards.
+// Nothing in the processor writes them. It also holds the scratch buffer for
+// one side's ports.
+type labelSizeContext struct {
+	arena   *layered.LGraphArena
+	graphID layered.LGraphID
+	scratch []layered.LPortID
+
+	vertical      bool
+	verticalKnown bool
+	spacings      [4]graphSpacing
+	padding       geometry.Spacing
+	paddingKnown  bool
+}
+
+type graphSpacing struct {
+	property *basegraph.Property[float64]
+	value    float64
+}
+
+// isVertical is directionIsVertical(Get(graph, DirectionOption)).
+func (context *labelSizeContext) isVertical() bool {
+	if !context.verticalKnown {
+		context.vertical = directionIsVertical(
+			basegraph.Get(&context.arena.Graph(context.graphID).Properties, layered.DirectionOption))
+		context.verticalKnown = true
+	}
+	return context.vertical
+}
+
+// individualOrDefault is layered.IndividualOrDefault(arena, nodeID, property).
+func (context *labelSizeContext) individualOrDefault(
+	nodeID layered.LNodeID,
+	property *basegraph.Property[float64],
+) float64 {
+	arena := context.arena
+	if individual, found := basegraph.TryGet(&arena.Node(nodeID).Properties, layered.SpacingIndividual); found {
+		if value, explicit := basegraph.TryGet(&individual.Properties, *property); explicit {
+			return value
+		}
+	}
+	graphID := arena.NodeGraph(nodeID)
+	if graphID != context.graphID {
+		return basegraph.Get(&arena.Graph(graphID).Properties, *property)
+	}
+	for index := range context.spacings {
+		cached := &context.spacings[index]
+		if cached.property == property {
+			return cached.value
+		}
+		if cached.property == nil {
+			cached.property = property
+			cached.value = basegraph.Get(&arena.Graph(graphID).Properties, *property)
+			return cached.value
+		}
+	}
+	return basegraph.Get(&arena.Graph(graphID).Properties, *property)
+}
+
+// nodeLabelPadding returns nodeID's node-label padding: its individual
+// spacing override, else its own option, else the graph's (read once).
+func (context *labelSizeContext) nodeLabelPadding(nodeID layered.LNodeID) geometry.Spacing {
+	node := context.arena.Node(nodeID)
+	if individual, found := basegraph.TryGet(&node.Properties, layered.SpacingIndividual); found {
+		if value, explicit := basegraph.TryGet(&individual.Properties, layered.NodeLabelsPadding); explicit {
+			return value
+		}
+	}
+	if value, explicit := basegraph.TryGet(&node.Properties, layered.NodeLabelsPadding); explicit {
+		return value
+	}
+	if !context.paddingKnown {
+		context.padding = basegraph.Get(&context.arena.Graph(context.graphID).Properties, layered.NodeLabelsPadding)
+		context.paddingKnown = true
+	}
+	return context.padding
+}
+
+func (context *labelSizeContext) processNodes(nodes []layered.LNodeID) {
+	arena, graphID := context.arena, context.graphID
+	for _, nodeID := range nodes {
 		node := arena.Node(nodeID)
 		if node.Type != layered.NormalNode {
 			continue
@@ -55,8 +148,8 @@ func ProcessLabelAndNodeSizes(arena *layered.LGraphArena, graphID layered.LGraph
 			}
 			basegraph.Set(&node.Properties, layered.PortConstraintsOption, layered.PortConstraintsFixedPosition)
 		}
-		placePortLabels(arena, graphID, nodeID)
-		placeNodeLabels(arena, graphID, nodeID)
+		context.placePortLabels(nodeID)
+		context.placeNodeLabels(nodeID)
 	}
 }
 
@@ -67,13 +160,16 @@ type nodeLabelLocation struct {
 	outsideSide     layered.PortSide
 }
 
-func placeNodeLabels(
-	arena *layered.LGraphArena,
-	graphID layered.LGraphID,
-	nodeID layered.LNodeID,
-) {
+func (context *labelSizeContext) placeNodeLabels(nodeID layered.LNodeID) {
+	arena := context.arena
 	node := arena.Node(nodeID)
 	defaultPlacement := basegraph.Get(&node.Properties, nodespacing.NodeLabelsPlacement)
+	if len(node.Labels) == 0 {
+		// Without labels only the padding read can have an effect (it may
+		// materialise the graph's node-label padding default).
+		context.nodeLabelPadding(nodeID)
+		return
+	}
 	groups := make(map[nodeLabelLocation][]layered.LLabelID)
 	locations := make([]nodeLabelLocation, 0)
 	for _, labelID := range node.Labels {
@@ -92,11 +188,10 @@ func placeNodeLabels(
 		groups[location] = append(groups[location], labelID)
 	}
 
-	verticalLayout := directionIsVertical(
-		basegraph.Get(&arena.Graph(graphID).Properties, layered.DirectionOption))
-	gap := layered.IndividualOrDefault(arena, nodeID, &layered.SpacingLabelLabel)
-	nodeLabelSpacing := layered.IndividualOrDefault(arena, nodeID, &layered.SpacingLabelNode)
-	padding := individualNodeLabelPadding(arena, graphID, nodeID)
+	verticalLayout := context.isVertical()
+	gap := context.individualOrDefault(nodeID, &layered.SpacingLabelLabel)
+	nodeLabelSpacing := context.individualOrDefault(nodeID, &layered.SpacingLabelNode)
+	padding := context.nodeLabelPadding(nodeID)
 	for _, location := range locations {
 		cell := newEndLabelCell(arena, groups[location], gap, !verticalLayout)
 		cell.horizontalAlign = location.horizontalAlign
@@ -153,23 +248,6 @@ func parseNodeLabelLocation(values []string) (nodeLabelLocation, bool) {
 		}
 	}
 	return location, location.outsideSide != layered.UndefinedSide
-}
-
-func individualNodeLabelPadding(
-	arena *layered.LGraphArena,
-	graphID layered.LGraphID,
-	nodeID layered.LNodeID,
-) geometry.Spacing {
-	node := arena.Node(nodeID)
-	if individual, found := basegraph.TryGet(&node.Properties, layered.SpacingIndividual); found {
-		if value, explicit := basegraph.TryGet(&individual.Properties, layered.NodeLabelsPadding); explicit {
-			return value
-		}
-	}
-	if value, explicit := basegraph.TryGet(&node.Properties, layered.NodeLabelsPadding); explicit {
-		return value
-	}
-	return basegraph.Get(&arena.Graph(graphID).Properties, layered.NodeLabelsPadding)
 }
 
 func nodeLabelCellRectangle(
@@ -232,31 +310,29 @@ func nodeLabelCellRectangle(
 	return rectangle
 }
 
-func placePortLabels(
-	arena *layered.LGraphArena,
-	graphID layered.LGraphID,
-	nodeID layered.LNodeID,
-) {
+func (context *labelSizeContext) placePortLabels(nodeID layered.LNodeID) {
+	arena := context.arena
 	node := arena.Node(nodeID)
-	placement := append([]string(nil),
-		basegraph.Get(&node.Properties, nodespacing.PortLabelsPlacement)...)
-	if basegraph.Get(&node.Properties, core.PortLabelsNextToPortIfPossible) &&
-		!hasPlacement(placement, "NEXT_TO_PORT_IF_POSSIBLE") {
-		placement = append(placement, "NEXT_TO_PORT_IF_POSSIBLE")
-	}
+	// ELK copies the placement and appends NEXT_TO_PORT_IF_POSSIBLE when the
+	// node asks for it; the copy is only searched, so it is not made: the
+	// appended entry matches only the NEXT_TO_PORT_IF_POSSIBLE test below.
+	placement := basegraph.Get(&node.Properties, nodespacing.PortLabelsPlacement)
+	appendNext := basegraph.Get(&node.Properties, core.PortLabelsNextToPortIfPossible) &&
+		!hasPlacement(placement, "NEXT_TO_PORT_IF_POSSIBLE")
 	inside, outside := hasPlacement(placement, "INSIDE"), hasPlacement(placement, "OUTSIDE")
 	if inside == outside {
 		return
 	}
-	verticalLayout := directionIsVertical(
-		basegraph.Get(&arena.Graph(graphID).Properties, layered.DirectionOption))
-	gap := layered.IndividualOrDefault(arena, nodeID, &layered.SpacingLabelLabel)
-	horizontalSpacing := layered.IndividualOrDefault(
-		arena, nodeID, &layered.SpacingLabelPortHorizontal)
-	verticalSpacing := layered.IndividualOrDefault(
-		arena, nodeID, &layered.SpacingLabelPortVertical)
+	if len(node.Ports) == 0 {
+		// Everything below only reads, and acts per port.
+		return
+	}
+	verticalLayout := context.isVertical()
+	gap := context.individualOrDefault(nodeID, &layered.SpacingLabelLabel)
+	horizontalSpacing := context.individualOrDefault(nodeID, &layered.SpacingLabelPortHorizontal)
+	verticalSpacing := context.individualOrDefault(nodeID, &layered.SpacingLabelPortVertical)
 	borderPadding := nodeContainerBorderPadding(arena, nodeID)
-	nextIfPossible := hasPlacement(placement, "NEXT_TO_PORT_IF_POSSIBLE")
+	nextIfPossible := appendNext || hasPlacement(placement, "NEXT_TO_PORT_IF_POSSIBLE")
 	treatAsGroup := basegraph.Get(&node.Properties, core.PortLabelsTreatAsGroup)
 	alwaysSame := hasPlacement(placement, "ALWAYS_SAME_SIDE")
 	alwaysOther := hasPlacement(placement, "ALWAYS_OTHER_SAME_SIDE")
@@ -267,7 +343,8 @@ func placePortLabels(
 	for _, side := range []layered.PortSide{
 		layered.NorthSide, layered.EastSide, layered.SouthSide, layered.WestSide,
 	} {
-		ports := portsInPlacementOrder(arena, nodeID, side)
+		ports := portsInPlacementOrder(arena, nodeID, side, context.scratch[:0])
+		context.scratch = ports
 		if len(ports) == 0 {
 			continue
 		}
@@ -299,12 +376,19 @@ func placePortLabels(
 	}
 }
 
+// portsInPlacementOrder appends the node's ports on side to ports (an empty
+// buffer) in placement order.
 func portsInPlacementOrder(
 	arena *layered.LGraphArena,
 	nodeID layered.LNodeID,
 	side layered.PortSide,
+	ports []layered.LPortID,
 ) []layered.LPortID {
-	ports := arena.NodePortsOnSide(nodeID, side)
+	for _, portID := range arena.Node(nodeID).Ports {
+		if arena.Port(portID).Side == side {
+			ports = append(ports, portID)
+		}
+	}
 	if side == layered.SouthSide || side == layered.WestSide {
 		for left, right := 0, len(ports)-1; left < right; left, right = left+1, right-1 {
 			ports[left], ports[right] = ports[right], ports[left]
@@ -594,17 +678,32 @@ func individualPortSpacing(
 	return basegraph.Get(&arena.Graph(graphID).Properties, layered.SpacingPortPort)
 }
 
+// Keys of "org.eclipse.elk.portAlignment." + the side's suffix (the empty
+// suffix for a side without one), and of the default alignment.
+var (
+	portAlignmentKeys = func() (keys [layered.WestSide + 1]basegraph.PropertyKey) {
+		suffixes := [layered.WestSide + 1]string{
+			layered.NorthSide: "north", layered.EastSide: "east",
+			layered.SouthSide: "south", layered.WestSide: "west",
+		}
+		for side, suffix := range suffixes {
+			keys[side] = basegraph.InternPropertyKey("org.eclipse.elk.portAlignment." + suffix)
+		}
+		return keys
+	}()
+	portAlignmentOtherKey   = basegraph.InternPropertyKey("org.eclipse.elk.portAlignment.")
+	portAlignmentDefaultKey = basegraph.InternPropertyKey("org.eclipse.elk.portAlignment.default")
+)
+
 func portAlignment(node *layered.LNode, side layered.PortSide) string {
-	suffix := map[layered.PortSide]string{
-		layered.NorthSide: "north",
-		layered.EastSide:  "east",
-		layered.SouthSide: "south",
-		layered.WestSide:  "west",
-	}[side]
-	if value, ok := node.Properties.Raw("org.eclipse.elk.portAlignment." + suffix); ok {
+	key := portAlignmentOtherKey
+	if int(side) < len(portAlignmentKeys) {
+		key = portAlignmentKeys[side]
+	}
+	if value, ok := node.Properties.RawKey(key); ok {
 		return strings.ToUpper(strings.TrimSpace(toString(value)))
 	}
-	if value, ok := node.Properties.Raw("org.eclipse.elk.portAlignment.default"); ok {
+	if value, ok := node.Properties.RawKey(portAlignmentDefaultKey); ok {
 		return strings.ToUpper(strings.TrimSpace(toString(value)))
 	}
 	return "DISTRIBUTED"

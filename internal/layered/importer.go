@@ -21,33 +21,124 @@ import (
 // ImportMaps preserve object identity between ELK's public graph arena and
 // its layered working graph.
 type ImportMaps struct {
-	Nodes  map[basegraph.NodeID]LNodeID
-	Ports  map[basegraph.PortID]LPortID
-	Edges  map[basegraph.EdgeID]LEdgeID
-	Labels map[basegraph.LabelID]LLabelID
-	Graphs map[basegraph.NodeID]LGraphID
+	Nodes  ImportIndex[basegraph.NodeID, LNodeID]
+	Ports  ImportIndex[basegraph.PortID, LPortID]
+	Edges  ImportIndex[basegraph.EdgeID, LEdgeID]
+	Labels ImportIndex[basegraph.LabelID, LLabelID]
+	Graphs ImportIndex[basegraph.NodeID, LGraphID]
+}
+
+// ImportIndex maps model element IDs (dense arena indices) to layered IDs.
+// It is a slice indexed by the model ID holding the layered ID plus one, zero
+// for an element that has no counterpart; lookups answer exactly what a map
+// holding the same pairs would.
+type ImportIndex[K ~uint32, V ~uint32] struct {
+	values []uint32
+}
+
+// Get returns the layered ID mapped to key and whether there is one.
+func (index *ImportIndex[K, V]) Get(key K) (V, bool) {
+	if int(key) < len(index.values) {
+		if value := index.values[key]; value != 0 {
+			return V(value - 1), true
+		}
+	}
+	return 0, false
+}
+
+// At returns the layered ID mapped to key (zero when there is none).
+func (index *ImportIndex[K, V]) At(key K) V {
+	value, _ := index.Get(key)
+	return value
+}
+
+func (index *ImportIndex[K, V]) set(key K, value V) {
+	if int(key) >= len(index.values) {
+		if int(key) < cap(index.values) {
+			index.values = index.values[:int(key)+1]
+		} else {
+			grown := make([]uint32, int(key)+1, 2*int(key)+2)
+			copy(grown, index.values)
+			index.values = grown
+		}
+	}
+	index.values[key] = uint32(value) + 1
 }
 
 type ElkGraphImporter struct {
 	Model *basegraph.Model
 	Maps  ImportMaps
+
+	// modelOrder caches needsModelOrder per graph (0 unknown, 1 no, 2 yes):
+	// nothing the importer does changes the graph options it reads.
+	modelOrder []uint8
+	// directions caches each graph's direction plus one (0 unknown) for the
+	// per-node and per-port reads. The importer writes a graph's direction
+	// only while creating the graph (createGraph, and right after it for a
+	// nested graph), before anything reads it.
+	directions []uint8
 }
 
 func NewElkGraphImporter(model *basegraph.Model) *ElkGraphImporter {
-	return &ElkGraphImporter{Model: model, Maps: ImportMaps{
-		Nodes: make(map[basegraph.NodeID]LNodeID), Ports: make(map[basegraph.PortID]LPortID),
-		Edges: make(map[basegraph.EdgeID]LEdgeID), Labels: make(map[basegraph.LabelID]LLabelID),
-		Graphs: make(map[basegraph.NodeID]LGraphID),
-	}}
+	importer := &ElkGraphImporter{Model: model}
+	if model != nil {
+		// Every index starts at its model arena's size, cut from one block.
+		nodes, ports, edges, labels := len(model.Nodes), len(model.Ports), len(model.Edges), len(model.Labels)
+		block := make([]uint32, 2*nodes+ports+edges+labels)
+		cut := func(length int) []uint32 {
+			values := block[:length:length]
+			block = block[length:]
+			return values
+		}
+		importer.Maps = ImportMaps{
+			Nodes:  ImportIndex[basegraph.NodeID, LNodeID]{cut(nodes)},
+			Ports:  ImportIndex[basegraph.PortID, LPortID]{cut(ports)},
+			Edges:  ImportIndex[basegraph.EdgeID, LEdgeID]{cut(edges)},
+			Labels: ImportIndex[basegraph.LabelID, LLabelID]{cut(labels)},
+			Graphs: ImportIndex[basegraph.NodeID, LGraphID]{cut(nodes)},
+		}
+	}
+	return importer
+}
+
+// graphDirection is Get(graph, DirectionOption) for a graph of this import
+// whose direction is final.
+func (importer *ElkGraphImporter) graphDirection(arena *LGraphArena, graphID LGraphID) Direction {
+	for int(graphID) >= len(importer.directions) {
+		importer.directions = append(importer.directions, 0)
+	}
+	if importer.directions[graphID] == 0 {
+		direction := basegraph.Get(&arena.Graph(graphID).Properties, DirectionOption)
+		if direction == 255 {
+			return direction
+		}
+		importer.directions[graphID] = uint8(direction) + 1
+	}
+	return Direction(importer.directions[graphID] - 1)
+}
+
+// needsModelOrder is needsModelOrder(graph) for a graph of this import,
+// evaluated once per graph.
+func (importer *ElkGraphImporter) needsModelOrder(arena *LGraphArena, graphID LGraphID) bool {
+	for int(graphID) >= len(importer.modelOrder) {
+		importer.modelOrder = append(importer.modelOrder, 0)
+	}
+	if importer.modelOrder[graphID] == 0 {
+		importer.modelOrder[graphID] = 1
+		if needsModelOrder(arena.Graph(graphID)) {
+			importer.modelOrder[graphID] = 2
+		}
+	}
+	return importer.modelOrder[graphID] == 2
 }
 
 func (importer *ElkGraphImporter) ImportGraph(parent basegraph.NodeID) (*LGraphArena, LGraphID, error) {
 	if importer.Model == nil {
 		return nil, 0, fmt.Errorf("layered: cannot import a nil graph")
 	}
-	arena := NewLGraphArena()
+	arena := AcquireLGraphArena()
 	topGraph := importer.createGraph(arena, parent)
-	importer.Maps.Graphs[parent] = topGraph
+	importer.Maps.Graphs.set(parent, topGraph)
 	if basegraph.Get(&arena.Graph(topGraph).Properties, core.PartitioningActivate) {
 		importer.addGraphProperty(arena, topGraph, GraphPropertyPartitions)
 	}
@@ -223,7 +314,7 @@ func (importer *ElkGraphImporter) transformExternalPort(
 		basegraph.Get(&arena.Graph(graphID).Properties, DirectionOption),
 		graphID,
 	)
-	basegraph.Set(&arena.Node(dummyID).Properties, OriginalElement, PortOrigin(portID))
+	arena.SetOrigin(&arena.Node(dummyID).Properties, PortOrigin(portID))
 	basegraph.Set(&arena.Node(dummyID).Properties, nodespacing.PortLabelsPlacement, []string{"OUTSIDE"})
 	dummyPortID := arena.Node(dummyID).Ports[0]
 	arena.Port(dummyPortID).ConnectedToExternalNodes = importer.isConnectedToExternalNodes(portID)
@@ -263,7 +354,7 @@ func (importer *ElkGraphImporter) transformExternalPort(
 	basegraph.Set(&arena.Node(dummyID).Properties, SpacingLabelLabel,
 		basegraph.Get(outerProperties, SpacingLabelLabel))
 	arena.Graph(graphID).LayerlessNodes = append(arena.Graph(graphID).LayerlessNodes, dummyID)
-	importer.Maps.Ports[portID] = dummyPortID
+	importer.Maps.Ports.set(portID, dummyPortID)
 	return nil
 }
 
@@ -382,7 +473,7 @@ func (importer *ElkGraphImporter) createGraph(arena *LGraphArena, origin basegra
 	graphID := arena.AddGraph()
 	graph := arena.Graph(graphID)
 	copyTypedProperties(&graph.Properties, &importer.Model.Node(origin).Properties)
-	basegraph.Set(&graph.Properties, OriginalElement, NodeOrigin(origin))
+	arena.SetOrigin(&graph.Properties, NodeOrigin(origin))
 	basegraph.Set(&graph.Properties, GraphProperties, GraphProperty(0))
 	graph.Padding = basegraph.Get(&graph.Properties, Padding)
 	if basegraph.Get(&graph.Properties, DirectionOption) == DirectionUndefined {
@@ -404,9 +495,9 @@ func (importer *ElkGraphImporter) importNodes(
 				continue
 			}
 			lnode := importer.transformNode(arena, nodeID, topGraph)
-			if needsModelOrder(arena.Graph(topGraph)) &&
+			if importer.needsModelOrder(arena, topGraph) &&
 				!basegraph.Get(&importer.Model.Node(nodeID).Properties, NoModelOrder) {
-				basegraph.Set(&arena.Node(lnode).Properties, ModelOrder, modelOrder)
+				basegraph.SetInt(&arena.Node(lnode).Properties, ModelOrder, modelOrder)
 				modelOrder++
 			}
 		}
@@ -426,7 +517,7 @@ func (importer *ElkGraphImporter) importNodes(
 		}
 		parentGraph := topGraph
 		if node.Parent != nil && *node.Parent != parent {
-			mappedParent, found := importer.Maps.Nodes[*node.Parent]
+			mappedParent, found := importer.Maps.Nodes.Get(*node.Parent)
 			if !found || arena.Node(mappedParent).NestedGraph == nil {
 				return fmt.Errorf("layered: parent of node %s has no nested graph", node.Identifier)
 			}
@@ -437,7 +528,7 @@ func (importer *ElkGraphImporter) importNodes(
 		if len(node.Children) > 0 && baseHierarchy(node) == HierarchyIncludeChildren {
 			nestedID := importer.createGraph(arena, nodeID)
 			basegraph.Set(&arena.Graph(nestedID).Properties, DirectionOption, direction)
-			importer.Maps.Graphs[nodeID] = nestedID
+			importer.Maps.Graphs.set(nodeID, nestedID)
 			nested = &nestedID
 			if baseValue, found := basegraph.TryGet(&arena.Graph(nestedID).Properties, SpacingBaseValue); found {
 				ApplySpacingBaseValue(&arena.Graph(nestedID).Properties, baseValue)
@@ -445,9 +536,9 @@ func (importer *ElkGraphImporter) importNodes(
 		}
 
 		lnode := importer.transformNode(arena, nodeID, parentGraph)
-		if needsModelOrder(arena.Graph(parentGraph)) &&
+		if importer.needsModelOrder(arena, parentGraph) &&
 			!basegraph.Get(&node.Properties, NoModelOrder) {
-			basegraph.Set(&arena.Node(lnode).Properties, ModelOrder, modelOrder)
+			basegraph.SetInt(&arena.Node(lnode).Properties, ModelOrder, modelOrder)
 			modelOrder++
 		}
 		if nested != nil {
@@ -470,12 +561,12 @@ func (importer *ElkGraphImporter) transformNode(
 	lnode := arena.Node(lnodeID)
 	copyTypedProperties(&lnode.Properties, &original.Properties)
 	copyIndividualSpacings(lnode, original)
-	basegraph.Set(&lnode.Properties, OriginalElement, NodeOrigin(nodeID))
+	arena.SetOrigin(&lnode.Properties, NodeOrigin(nodeID))
 	lnode.Position = original.Shape.Position()
 	lnode.Size = geometry.Point{X: original.Shape.Width, Y: original.Shape.Height}
 	lnode.Margin = basegraph.Get(&original.Properties, nodespacing.Margins)
 	arena.Graph(graphID).LayerlessNodes = append(arena.Graph(graphID).LayerlessNodes, lnodeID)
-	importer.Maps.Nodes[nodeID] = lnodeID
+	importer.Maps.Nodes.set(nodeID, lnodeID)
 
 	if len(original.Children) > 0 || basegraph.Get(&original.Properties, core.InsideSelfLoopsActivate) {
 		basegraph.Set(&lnode.Properties, CompoundNode, true)
@@ -487,8 +578,8 @@ func (importer *ElkGraphImporter) transformNode(
 	} else if constraints != PortConstraintsFree {
 		importer.addGraphProperty(arena, graphID, GraphPropertyNonFreePorts)
 	}
-	direction := basegraph.Get(&arena.Graph(graphID).Properties, DirectionOption)
-	assignPortModelOrder := needsModelOrder(arena.Graph(graphID)) &&
+	direction := importer.graphDirection(arena, graphID)
+	assignPortModelOrder := importer.needsModelOrder(arena, graphID) &&
 		!basegraph.Get(&original.Properties, NoModelOrder)
 	for portModelOrder, portID := range original.Ports {
 		if basegraph.Get(&importer.Model.Port(portID).Properties, core.NoLayout) {
@@ -496,7 +587,7 @@ func (importer *ElkGraphImporter) transformNode(
 		}
 		lportID := importer.transformPort(arena, portID, lnodeID, graphID, direction, constraints)
 		if assignPortModelOrder {
-			basegraph.Set(&arena.Port(lportID).Properties, ModelOrder, portModelOrder)
+			basegraph.SetInt(&arena.Port(lportID).Properties, ModelOrder, portModelOrder)
 		}
 	}
 	for _, labelID := range original.Labels {
@@ -523,7 +614,7 @@ func (importer *ElkGraphImporter) transformNode(
 // inheritance and must not be wrapped here.
 func copyIndividualSpacings(target *LNode, source *basegraph.Node) {
 	var individual IndividualSpacings
-	if raw, found := source.Properties.Raw(core.SpacingIndividual.ID); found {
+	if raw, found := source.Properties.RawKey(core.SpacingIndividual.Key()); found {
 		switch typed := raw.(type) {
 		case *core.IndividualSpacings:
 			if typed != nil {
@@ -552,7 +643,7 @@ func (importer *ElkGraphImporter) transformPort(
 	lportID := arena.AddPort()
 	lport := arena.Port(lportID)
 	copyTypedProperties(&lport.Properties, &original.Properties)
-	basegraph.Set(&lport.Properties, OriginalElement, PortOrigin(portID))
+	arena.SetOrigin(&lport.Properties, PortOrigin(portID))
 	lport.Position = original.Shape.Position()
 	lport.Size = geometry.Point{X: original.Shape.Width, Y: original.Shape.Height}
 	arena.SetPortNode(lportID, &nodeID)
@@ -578,7 +669,7 @@ func (importer *ElkGraphImporter) transformPort(
 		(direction == DirectionUp || direction == DirectionDown) && (side == EastSide || side == WestSide) {
 		importer.addGraphProperty(arena, graphID, GraphPropertyNorthSouthPorts)
 	}
-	importer.Maps.Ports[portID] = lportID
+	importer.Maps.Ports.set(portID, lportID)
 	return lportID
 }
 
@@ -587,10 +678,10 @@ func (importer *ElkGraphImporter) transformLabel(arena *LGraphArena, labelID bas
 	llabelID := arena.AddLabel(original.Text)
 	llabel := arena.Label(llabelID)
 	copyTypedProperties(&llabel.Properties, &original.Properties)
-	basegraph.Set(&llabel.Properties, OriginalElement, LabelOrigin(labelID))
+	arena.SetOrigin(&llabel.Properties, LabelOrigin(labelID))
 	llabel.Position = original.Shape.Position()
 	llabel.Size = geometry.Point{X: original.Shape.Width, Y: original.Shape.Height}
-	importer.Maps.Labels[labelID] = llabelID
+	importer.Maps.Labels.set(labelID, llabelID)
 	return llabelID
 }
 
@@ -608,7 +699,7 @@ func (importer *ElkGraphImporter) importEdges(
 		// graph than an earlier one.
 		for index := 0; index < len(containers); index++ {
 			for _, child := range importer.Model.Node(containers[index]).Children {
-				if _, partOfRun := importer.Maps.Graphs[child]; partOfRun {
+				if _, partOfRun := importer.Maps.Graphs.Get(child); partOfRun {
 					containers = append(containers, child)
 				}
 			}
@@ -619,8 +710,8 @@ func (importer *ElkGraphImporter) importEdges(
 	for _, container := range containers {
 		for _, edgeID := range append([]basegraph.EdgeID(nil), importer.Model.Node(container).ContainedEdges...) {
 			edge := importer.Model.Edge(edgeID)
-			if needsModelOrder(arena.Graph(topGraph)) {
-				basegraph.Set(&edge.Properties, ModelOrder, modelOrder)
+			if importer.needsModelOrder(arena, topGraph) {
+				basegraph.SetInt(&edge.Properties, ModelOrder, modelOrder)
 				modelOrder++
 			}
 			if len(edge.Sources) != 1 || len(edge.Targets) != 1 {
@@ -647,12 +738,12 @@ func (importer *ElkGraphImporter) importEdges(
 			if err != nil {
 				return err
 			}
-			if needsModelOrder(arena.Graph(topGraph)) {
-				basegraph.Set(&arena.Edge(ledgeID).Properties, ModelOrder,
+			if importer.needsModelOrder(arena, topGraph) {
+				basegraph.SetInt(&arena.Edge(ledgeID).Properties, ModelOrder,
 					basegraph.Get(&edge.Properties, ModelOrder))
 			}
 			if sourceNode != targetNode && importer.Model.Node(sourceNode).Parent != importer.Model.Node(targetNode).Parent {
-				if origin, found := importer.Maps.Graphs[container]; found {
+				if origin, found := importer.Maps.Graphs.Get(container); found {
 					basegraph.Set(&arena.Edge(ledgeID).Properties, CoordinateSystemOrigin, origin)
 				}
 			}
@@ -674,7 +765,7 @@ func (importer *ElkGraphImporter) importInsideSelfLoops(
 		if !importer.isInsideSelfLoop(parent, edgeID) {
 			continue
 		}
-		if _, alreadyImported := importer.Maps.Edges[edgeID]; alreadyImported {
+		if _, alreadyImported := importer.Maps.Edges.Get(edgeID); alreadyImported {
 			continue
 		}
 		if _, err := importer.transformEdge(arena, edgeID, topGraph); err != nil {
@@ -701,22 +792,22 @@ func (importer *ElkGraphImporter) edgeGraph(
 	root, containing, source, target basegraph.NodeID,
 ) LGraphID {
 	if importer.Model.IsDescendant(target, source) {
-		if graphID, found := importer.Maps.Graphs[source]; found {
+		if graphID, found := importer.Maps.Graphs.Get(source); found {
 			return graphID
 		}
 	}
 	if importer.Model.IsDescendant(source, target) {
-		if graphID, found := importer.Maps.Graphs[target]; found {
+		if graphID, found := importer.Maps.Graphs.Get(target); found {
 			return graphID
 		}
 	}
 	if containing == root {
 		return topGraph
 	}
-	if graphID, found := importer.Maps.Graphs[containing]; found {
+	if graphID, found := importer.Maps.Graphs.Get(containing); found {
 		return graphID
 	}
-	if lnode, found := importer.Maps.Nodes[containing]; found {
+	if lnode, found := importer.Maps.Nodes.Get(containing); found {
 		return arena.NodeGraph(lnode)
 	}
 	return topGraph
@@ -750,11 +841,11 @@ func (importer *ElkGraphImporter) transformEdge(
 	ledgeID := arena.AddEdge()
 	ledge := arena.Edge(ledgeID)
 	copyTypedProperties(&ledge.Properties, &original.Properties)
-	basegraph.Set(&ledge.Properties, OriginalElement, EdgeOrigin(edgeID))
+	arena.SetOrigin(&ledge.Properties, EdgeOrigin(edgeID))
 	basegraph.Unset(&ledge.Properties, JunctionPoints)
 	arena.SetEdgeSource(ledgeID, &sourcePort)
 	arena.SetEdgeTarget(ledgeID, &targetPort)
-	importer.Maps.Edges[edgeID] = ledgeID
+	importer.Maps.Edges.set(edgeID, ledgeID)
 
 	if sourceNodeID == targetNodeID {
 		importer.addGraphProperty(arena, graphID, GraphPropertySelfLoops)
@@ -793,11 +884,11 @@ func (importer *ElkGraphImporter) mappedEndpointNode(
 	shape basegraph.ShapeID,
 ) (LNodeID, bool) {
 	if shape.Kind == basegraph.PortShape {
-		if portID, found := importer.Maps.Ports[shape.Port]; found && arena.Port(portID).Node != nil {
+		if portID, found := importer.Maps.Ports.Get(shape.Port); found && arena.Port(portID).Node != nil {
 			return *arena.Port(portID).Node, true
 		}
 	}
-	nodeID, found := importer.Maps.Nodes[importer.Model.ShapeNode(shape)]
+	nodeID, found := importer.Maps.Nodes.Get(importer.Model.ShapeNode(shape))
 	return nodeID, found
 }
 
@@ -805,7 +896,7 @@ func (importer *ElkGraphImporter) mappedPort(shape basegraph.ShapeID) (LPortID, 
 	if shape.Kind != basegraph.PortShape {
 		return 0, false
 	}
-	port, found := importer.Maps.Ports[shape.Port]
+	port, found := importer.Maps.Ports.Get(shape.Port)
 	return port, found
 }
 
@@ -815,7 +906,7 @@ func (importer *ElkGraphImporter) createDefaultPort(
 	nodeID LNodeID,
 	portType PortType,
 ) LPortID {
-	direction := basegraph.Get(&arena.Graph(graphID).Properties, DirectionOption)
+	direction := importer.graphDirection(arena, graphID)
 	side := DirectionPortSide(direction)
 	if portType == PortTypeInput {
 		side = side.Opposed()
@@ -853,8 +944,13 @@ func needsModelOrder(graph *LGraph) bool {
 }
 
 func baseHierarchy(node *basegraph.Node) HierarchyHandling {
-	value, _ := node.Properties.Raw(core.HierarchyHandling.ID)
-	if hierarchy, found := parseHierarchyHandling(fmt.Sprint(value)); found {
+	value, _ := node.Properties.RawKey(core.HierarchyHandling.Key())
+	// fmt.Sprint of a string is the string itself.
+	text, isString := value.(string)
+	if !isString {
+		text = fmt.Sprint(value)
+	}
+	if hierarchy, found := parseHierarchyHandling(text); found {
 		return hierarchy
 	}
 	return HierarchySeparateChildren

@@ -24,6 +24,21 @@ import (
 type ElkGraphLayoutTransferrer struct {
 	Model *basegraph.Model
 	Maps  ImportMaps
+
+	// Per-transfer scratch: the graphs already applied; per node, the stamp of
+	// the graph visit that applied it (each visit is a fresh set: a visit
+	// restores the stamps it overwrote when it ends, through undo); and the
+	// section endpoint shapes, cut from one block.
+	graphSeen []bool
+	nodeStamp []uint32
+	stamp     uint32
+	undo      []stampUndo
+	shapes    []basegraph.ShapeID
+}
+
+type stampUndo struct {
+	node     LNodeID
+	previous uint32
 }
 
 func NewElkGraphLayoutTransferrer(model *basegraph.Model, maps ImportMaps) *ElkGraphLayoutTransferrer {
@@ -37,10 +52,32 @@ func (transferrer *ElkGraphLayoutTransferrer) ApplyLayout(
 	if transferrer.Model == nil {
 		return fmt.Errorf("layered: cannot transfer into a nil graph")
 	}
-	if err := transferrer.applyGraph(arena, topGraph, make(map[LGraphID]bool)); err != nil {
+	transferrer.graphSeen = make([]bool, len(arena.Graphs))
+	transferrer.nodeStamp = make([]uint32, len(arena.Nodes))
+	if err := transferrer.applyGraph(arena, topGraph); err != nil {
 		return err
 	}
-	seenEdges := make(map[basegraph.EdgeID]bool)
+	// Every model edge transferred below gets a first section; reserve the
+	// ones that do not exist yet in one step. (No section pointer is held
+	// across a section addition, so the arena's capacity is not observable.)
+	newSections, transferred := 0, 0
+	counted := make([]bool, len(transferrer.Model.Edges))
+	for index := range arena.Edges {
+		origin, found := basegraph.TryGet(&arena.Edges[index].Properties, OriginalElement)
+		if found && origin.Kind == OriginEdge && !counted[origin.Edge] {
+			counted[origin.Edge] = true
+			transferred++
+			if len(transferrer.Model.Edge(origin.Edge).Sections) == 0 {
+				newSections++
+			}
+		}
+	}
+	transferrer.Model.ReserveSections(newSections)
+	// The second walk visits the same edges in the same order; the first
+	// walk's flags are cleared and reused as its "seen" set.
+	clear(counted)
+	seenEdges := counted
+	transferrer.shapes = make([]basegraph.ShapeID, 0, 2*transferred)
 	for index := range arena.Edges {
 		edgeID := LEdgeID(index)
 		origin, found := basegraph.TryGet(&arena.Edge(edgeID).Properties, OriginalElement)
@@ -53,49 +90,102 @@ func (transferrer *ElkGraphLayoutTransferrer) ApplyLayout(
 	return nil
 }
 
+// applyGraph applies graphID's nodes, and the nested graphs of those, to the
+// model. The recursion into nested graphs is applyGraph alone; the work per
+// graph and per node is done by helpers outside it, so that a level of
+// nesting costs one small frame.
 func (transferrer *ElkGraphLayoutTransferrer) applyGraph(
 	arena *LGraphArena,
 	graphID LGraphID,
-	seen map[LGraphID]bool,
 ) error {
-	if seen[graphID] {
+	if transferrer.graphSeen[graphID] {
 		return nil
 	}
-	seen[graphID] = true
-	graph := arena.Graph(graphID)
-	origin, found := basegraph.TryGet(&graph.Properties, OriginalElement)
-	if !found || origin.Kind != OriginNode {
-		return fmt.Errorf("layered: graph %d has no original parent node", graphID)
+	transferrer.graphSeen[graphID] = true
+	originNode, offset, err := graphOriginAndOffset(arena, graphID)
+	if err != nil {
+		return err
 	}
-	offset := graph.Offset.Add(geometry.Point{X: graph.Padding.Left, Y: graph.Padding.Top})
-	processed := make(map[LNodeID]bool)
-	for _, nodeID := range arena.GraphAllNodes(graphID) {
-		if processed[nodeID] {
-			continue
+	// GraphAllNodes' order (layerless nodes, then layer by layer), walked in
+	// place: applying a node changes no node or layer list. A node met twice
+	// in one visit is applied once, as with the old per-visit set.
+	transferrer.stamp++
+	stamp := transferrer.stamp
+	undoStart := len(transferrer.undo)
+	graph := arena.Graph(graphID)
+	for list := -1; list < len(graph.Layers); list++ {
+		nodes := graph.LayerlessNodes
+		if list >= 0 {
+			nodes = arena.Layer(graph.Layers[list]).Nodes
 		}
-		processed[nodeID] = true
-		nodeOrigin, hasOrigin := basegraph.TryGet(&arena.Node(nodeID).Properties, OriginalElement)
-		if hasOrigin && nodeOrigin.Kind == OriginNode {
-			transferrer.applyNode(arena, nodeID, nodeOrigin.Node, offset)
-		} else if hasOrigin && nodeOrigin.Kind == OriginPort && graph.ParentNode == nil {
-			// A top-level external-port dummy represents a port on the node
-			// whose contents are currently being laid out. Its position is
-			// relative to that node rather than to a regular child node.
-			port := transferrer.Model.Port(nodeOrigin.Port)
-			position := arena.ExternalPortPosition(
-				graphID, nodeID, port.Shape.Width, port.Shape.Height)
-			port.Shape.SetLocation(position.X, position.Y)
-		}
-		if arena.Node(nodeID).NestedGraph != nil {
-			if err := transferrer.applyGraph(arena, *arena.Node(nodeID).NestedGraph, seen); err != nil {
-				return err
+		for _, nodeID := range nodes {
+			if nested := transferrer.applyNodeInVisit(arena, graphID, nodeID, offset, stamp); nested != nil {
+				if err := transferrer.applyGraph(arena, *nested); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	if graph.ParentNode == nil {
-		transferrer.applyParentNodeLayout(arena, graphID, origin.Node)
-	}
+	transferrer.endGraphVisit(arena, graphID, undoStart, originNode)
 	return nil
+}
+
+// graphOriginAndOffset returns the model node graphID was imported from and
+// the offset of its nodes' positions.
+func graphOriginAndOffset(arena *LGraphArena, graphID LGraphID) (basegraph.NodeID, geometry.Point, error) {
+	graph := arena.Graph(graphID)
+	origin, found := basegraph.TryGet(&graph.Properties, OriginalElement)
+	if !found || origin.Kind != OriginNode {
+		return 0, geometry.Point{}, fmt.Errorf("layered: graph %d has no original parent node", graphID)
+	}
+	return origin.Node, graph.Offset.Add(geometry.Point{X: graph.Padding.Left, Y: graph.Padding.Top}), nil
+}
+
+// applyNodeInVisit applies nodeID in the graph visit with stamp, unless the
+// visit applied it already, and returns the nested graph the visit applies
+// next (nil: none, or the node was applied already).
+func (transferrer *ElkGraphLayoutTransferrer) applyNodeInVisit(
+	arena *LGraphArena,
+	graphID LGraphID,
+	nodeID LNodeID,
+	offset geometry.Point,
+	stamp uint32,
+) *LGraphID {
+	if transferrer.nodeStamp[nodeID] == stamp {
+		return nil
+	}
+	transferrer.undo = append(transferrer.undo, stampUndo{node: nodeID, previous: transferrer.nodeStamp[nodeID]})
+	transferrer.nodeStamp[nodeID] = stamp
+	nodeOrigin, hasOrigin := basegraph.TryGet(&arena.Node(nodeID).Properties, OriginalElement)
+	if hasOrigin && nodeOrigin.Kind == OriginNode {
+		transferrer.applyNode(arena, nodeID, nodeOrigin.Node, offset)
+	} else if hasOrigin && nodeOrigin.Kind == OriginPort && arena.Graph(graphID).ParentNode == nil {
+		// A top-level external-port dummy represents a port on the node
+		// whose contents are currently being laid out. Its position is
+		// relative to that node rather than to a regular child node.
+		port := transferrer.Model.Port(nodeOrigin.Port)
+		position := arena.ExternalPortPosition(
+			graphID, nodeID, port.Shape.Width, port.Shape.Height)
+		port.Shape.SetLocation(position.X, position.Y)
+	}
+	return arena.Node(nodeID).NestedGraph
+}
+
+// endGraphVisit ends the visit of graphID: the stamps it overwrote are
+// restored, and a top graph's parent node gets its layout.
+func (transferrer *ElkGraphLayoutTransferrer) endGraphVisit(
+	arena *LGraphArena,
+	graphID LGraphID,
+	undoStart int,
+	originNode basegraph.NodeID,
+) {
+	for index := len(transferrer.undo) - 1; index >= undoStart; index-- {
+		transferrer.nodeStamp[transferrer.undo[index].node] = transferrer.undo[index].previous
+	}
+	transferrer.undo = transferrer.undo[:undoStart]
+	if arena.Graph(graphID).ParentNode == nil {
+		transferrer.applyParentNodeLayout(arena, graphID, originNode)
+	}
 }
 
 // applyParentNodeLayout mirrors ElkGraphLayoutTransferrer.applyParentNodeLayout.
@@ -150,14 +240,14 @@ func (transferrer *ElkGraphLayoutTransferrer) applyNode(
 	original := transferrer.Model.Node(originalID)
 	original.Shape.SetLocation(node.Position.X+offset.X, node.Position.Y+offset.Y)
 	original.Shape.SetDimensions(node.Size.X, node.Size.Y)
-	basegraph.Set(&original.Properties, LayerIDOption,
+	basegraph.SetInt(&original.Properties, LayerIDOption,
 		func() int {
 			if node.Layer == nil {
 				return -1
 			}
 			return arena.LayerIndex(*node.Layer)
 		}())
-	basegraph.Set(&original.Properties, PositionIDOption, arena.NodeIndexInLayer(nodeID))
+	basegraph.SetInt(&original.Properties, PositionIDOption, arena.NodeIndexInLayer(nodeID))
 
 	for _, portID := range node.Ports {
 		origin, found := basegraph.TryGet(&arena.Port(portID).Properties, OriginalElement)
@@ -168,7 +258,7 @@ func (transferrer *ElkGraphLayoutTransferrer) applyNode(
 		originalPort := transferrer.Model.Port(origin.Port)
 		originalPort.Shape.SetLocation(port.Position.X, port.Position.Y)
 		originalPort.Shape.SetDimensions(port.Size.X, port.Size.Y)
-		basegraph.Set(&originalPort.Properties, core.PortSide, port.Side.String())
+		setPortSideName(&originalPort.Properties, port.Side)
 		if !fixedPortLabelPlacement(&node.Properties) {
 			for _, labelID := range port.Labels {
 				transferrer.applyLabel(arena, labelID, geometry.Point{})
@@ -304,8 +394,8 @@ func (transferrer *ElkGraphLayoutTransferrer) applyEdge(
 	section.Start = sourcePoint
 	section.End = targetPoint
 	section.StartPresent, section.EndPresent = true, true
-	section.IncomingShape = copyShapeID(&original.Sources[0])
-	section.OutgoingShape = copyShapeID(&original.Targets[0])
+	section.IncomingShape = transferrer.copyShapeID(original.Sources[0])
+	section.OutgoingShape = transferrer.copyShapeID(original.Targets[0])
 	section.BendPoints = make(geometry.Chain, len(edge.BendPoints))
 	for index, point := range edge.BendPoints {
 		section.BendPoints[index] = point.Add(edgeOffset)
@@ -362,10 +452,32 @@ func (transferrer *ElkGraphLayoutTransferrer) edgeLayoutOffsets(
 	return baseOffset, baseOffset.Add(hierarchicalOffset)
 }
 
-func copyShapeID(value *basegraph.ShapeID) *basegraph.ShapeID {
-	if value == nil {
-		return nil
+// copyShapeID returns a pointer to a new copy of value, taken from the
+// transfer's block (every copy has its own element).
+func (transferrer *ElkGraphLayoutTransferrer) copyShapeID(value basegraph.ShapeID) *basegraph.ShapeID {
+	if len(transferrer.shapes) == cap(transferrer.shapes) {
+		copy := value
+		return &copy
 	}
-	copy := *value
-	return &copy
+	transferrer.shapes = append(transferrer.shapes, value)
+	return &transferrer.shapes[len(transferrer.shapes)-1]
+}
+
+// portSideNames holds side.String() of every defined side, boxed once.
+var portSideNames = func() (names [WestSide + 1]any) {
+	for side := range names {
+		names[side] = PortSide(side).String()
+	}
+	return names
+}()
+
+// setPortSideName is Set(properties, core.PortSide, side.String()). A boxed
+// string cannot be changed, so storing one shared box per side is the same as
+// boxing the name anew.
+func setPortSideName(properties *basegraph.PropertyMap, side PortSide) {
+	if int(side) < len(portSideNames) {
+		properties.SetRawKey(core.PortSide.Key(), portSideNames[side])
+		return
+	}
+	basegraph.Set(properties, core.PortSide, side.String())
 }

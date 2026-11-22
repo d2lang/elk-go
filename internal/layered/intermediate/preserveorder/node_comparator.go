@@ -34,16 +34,15 @@ func (strategy LongEdgeOrderingStrategy) ReturnValue() int {
 }
 
 // NodeComparator is ELK 0.12.0's ModelOrderNodeComparator for ordinary D2
-// model orders. BiggerThan and SmallerThan encode the transitive associations
-// accumulated while the sort calls Compare.
+// model orders. order holds the transitive biggerThan/smallerThan
+// associations accumulated while the sort calls Compare.
 type NodeComparator struct {
 	Arena         *layered.LGraphArena
 	PreviousLayer []layered.LNodeID
 	Ordering      layered.OrderingStrategy
 	LongEdgeOrder LongEdgeOrderingStrategy
 	BeforePorts   bool
-	BiggerThan    map[layered.LNodeID]map[layered.LNodeID]struct{}
-	SmallerThan   map[layered.LNodeID]map[layered.LNodeID]struct{}
+	order         TransitiveOrder[layered.LNodeID]
 }
 
 func NewNodeComparator(
@@ -59,8 +58,25 @@ func NewNodeComparator(
 		Ordering:      ordering,
 		LongEdgeOrder: longEdgeOrder,
 		BeforePorts:   beforePorts,
-		BiggerThan:    make(map[layered.LNodeID]map[layered.LNodeID]struct{}),
-		SmallerThan:   make(map[layered.LNodeID]map[layered.LNodeID]struct{}),
+	}
+}
+
+// NewNodeComparatorSharing is NewNodeComparator keeping previousLayer itself
+// instead of a copy; the caller must not change it while the comparator is
+// used.
+func NewNodeComparatorSharing(
+	arena *layered.LGraphArena,
+	previousLayer []layered.LNodeID,
+	ordering layered.OrderingStrategy,
+	longEdgeOrder LongEdgeOrderingStrategy,
+	beforePorts bool,
+) *NodeComparator {
+	return &NodeComparator{
+		Arena:         arena,
+		PreviousLayer: previousLayer,
+		Ordering:      ordering,
+		LongEdgeOrder: longEdgeOrder,
+		BeforePorts:   beforePorts,
 	}
 }
 
@@ -157,28 +173,7 @@ func (comparator *NodeComparator) Compare(first, second layered.LNodeID) int {
 func (comparator *NodeComparator) initializeAndRecall(
 	first, second layered.LNodeID,
 ) int {
-	if _, found := comparator.BiggerThan[first]; !found {
-		comparator.BiggerThan[first] = make(map[layered.LNodeID]struct{})
-	} else if containsNode(comparator.BiggerThan[first], second) {
-		return 1
-	}
-	if _, found := comparator.BiggerThan[second]; !found {
-		comparator.BiggerThan[second] = make(map[layered.LNodeID]struct{})
-	} else if containsNode(comparator.BiggerThan[second], first) {
-		return -1
-	}
-	if _, found := comparator.SmallerThan[first]; !found {
-		comparator.SmallerThan[first] = make(map[layered.LNodeID]struct{})
-	} else if containsNode(comparator.SmallerThan[first], second) {
-		return -1
-	}
-	if _, found := comparator.SmallerThan[second]; !found {
-		comparator.SmallerThan[second] = make(map[layered.LNodeID]struct{})
-	} else if containsNode(comparator.BiggerThan[second], first) {
-		// Preserve the source comparator's second biggerThan lookup.
-		return 1
-	}
-	return 0
+	return comparator.order.Recall(first, second)
 }
 
 func (comparator *NodeComparator) incomingSourcePortFromPreviousLayer(
@@ -381,49 +376,11 @@ func (comparator *NodeComparator) recordResult(
 }
 
 func (comparator *NodeComparator) update(bigger, smaller layered.LNodeID) {
-	comparator.ensureOrderingEntry(bigger)
-	comparator.ensureOrderingEntry(smaller)
-	biggerNodeBiggerThan := comparator.BiggerThan[bigger]
-	smallerNodeBiggerThan := comparator.BiggerThan[smaller]
-	biggerNodeSmallerThan := comparator.SmallerThan[bigger]
-	smallerNodeSmallerThan := comparator.SmallerThan[smaller]
-	biggerNodeBiggerThan[smaller] = struct{}{}
-	smallerNodeSmallerThan[bigger] = struct{}{}
-	for verySmall := range smallerNodeBiggerThan {
-		comparator.ensureOrderingEntry(verySmall)
-		biggerNodeBiggerThan[verySmall] = struct{}{}
-		comparator.SmallerThan[verySmall][bigger] = struct{}{}
-		for veryBig := range biggerNodeSmallerThan {
-			comparator.SmallerThan[verySmall][veryBig] = struct{}{}
-		}
-	}
-	for veryBig := range biggerNodeSmallerThan {
-		comparator.ensureOrderingEntry(veryBig)
-		smallerNodeSmallerThan[veryBig] = struct{}{}
-		comparator.BiggerThan[veryBig][smaller] = struct{}{}
-		for verySmall := range smallerNodeBiggerThan {
-			comparator.BiggerThan[veryBig][verySmall] = struct{}{}
-		}
-	}
-}
-
-func (comparator *NodeComparator) ensureOrderingEntry(node layered.LNodeID) {
-	if comparator.BiggerThan[node] == nil {
-		comparator.BiggerThan[node] = make(map[layered.LNodeID]struct{})
-	}
-	if comparator.SmallerThan[node] == nil {
-		comparator.SmallerThan[node] = make(map[layered.LNodeID]struct{})
-	}
+	comparator.order.Update(bigger, smaller)
 }
 
 func (comparator *NodeComparator) ClearTransitiveOrdering() {
-	comparator.BiggerThan = make(map[layered.LNodeID]map[layered.LNodeID]struct{})
-	comparator.SmallerThan = make(map[layered.LNodeID]map[layered.LNodeID]struct{})
-}
-
-func containsNode(values map[layered.LNodeID]struct{}, node layered.LNodeID) bool {
-	_, found := values[node]
-	return found
+	comparator.order.Clear()
 }
 
 func compareInt(first, second int) int {
