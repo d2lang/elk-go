@@ -50,16 +50,67 @@ func TestSameRankAcrossParents(t *testing.T) {
 					t.Fatalf("rank centers %v, %v", inside, r)
 				}
 			}
-			upstream := axis(rankRect(checkout).Move(merchant.Position()))
+			from := rankRect(checkout).Move(merchant.Position())
+			upstream := axis(from)
 			if (upstream < axis(inside)) != (dir == "RIGHT" || dir == "DOWN") {
 				t.Fatalf("checkout on wrong side: %v vs %v", upstream, axis(inside))
 			}
-			for _, e := range g.Edges[1:] {
+			// Ordinary ELK centers the unequal-sized checkout and commerce
+			// across the flow. Ranking the payment handoff must retain that
+			// straight incoming connection as well as the two flat edges.
+			if dir == "DOWN" || dir == "UP" {
+				if from.Center().X != inside.Center().X {
+					t.Fatalf("checkout and commerce X centers differ: %v, %v", from, inside)
+				}
+			} else if from.Center().Y != inside.Center().Y {
+				t.Fatalf("checkout and commerce Y centers differ: %v, %v", from, inside)
+			}
+			for _, e := range g.Edges {
 				if len(e.Sections) != 1 || len(e.Sections[0].BendPoints) != 0 {
-					t.Fatalf("%s: expected a straight handoff: %+v", e.ID.String(), e.Sections)
+					t.Fatalf("%s: expected a straight connection: %+v", e.ID.String(), e.Sections)
 				}
 			}
 		})
+	}
+}
+
+func TestRankedBranchRetainsIncomingAlignmentAcrossBoundary(t *testing.T) {
+	checkout, commerce := rankNode("checkout", 76, 43), rankNode("commerce", 113, 65)
+	channel, payments := rankNode("channel", 23, 18), rankNode("payments", 104, 41)
+	merchant := rankNode("merchant", 0, 0)
+	merchant.Children = []*Node{commerce, channel}
+	g := Graph{ID: StringID("root"),
+		LayoutOptions: LayoutOptions{"elk.direction": "DOWN", "elk.hierarchyHandling": "INCLUDE_CHILDREN", "d2.rankGroups": [][]string{{"commerce", "channel", "payments"}}},
+		Children:      []*Node{checkout, merchant, payments},
+		Edges:         []*Edge{rankEdge("checkout", "commerce"), rankEdge("commerce", "channel"), rankEdge("channel", "payments")},
+	}
+	if err := Layout(&g); err != nil {
+		t.Fatal(err)
+	}
+	// Moving channel beside commerce widens merchant. The incoming edge from
+	// outside can still meet commerce on its original centerline.
+	from, to := rankRect(checkout).Center(), rankRect(commerce).Move(rankRect(merchant).Position()).Center()
+	if from.X != to.X || len(g.Edges[0].Sections) != 1 || len(g.Edges[0].Sections[0].BendPoints) != 0 {
+		t.Fatalf("straight incoming edge lost: %v to %v, route %+v", from, to, g.Edges[0].Sections)
+	}
+}
+
+func TestRankedParallelBranchesKeepStraightEdges(t *testing.T) {
+	// Both branches narrow as they approach the join. Packing each layer
+	// independently would introduce a 70-unit dogleg in the second lane.
+	g := Graph{ID: StringID("root"), LayoutOptions: LayoutOptions{"elk.direction": "DOWN", "d2.rankGroups": [][]string{{"b", "d"}}},
+		Children: []*Node{rankNode("start", 60, 30), rankNode("a", 110, 30), rankNode("c", 130, 30),
+			rankNode("b", 40, 30), rankNode("d", 60, 30), rankNode("end", 60, 30)},
+		Edges: []*Edge{rankEdge("start", "a"), rankEdge("start", "c"), rankEdge("a", "b"),
+			rankEdge("c", "d"), rankEdge("b", "end"), rankEdge("d", "end")},
+	}
+	if err := Layout(&g); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range g.Edges[2:4] {
+		if len(e.Sections) != 1 || len(e.Sections[0].BendPoints) != 0 || e.Sections[0].StartPoint.X != e.Sections[0].EndPoint.X {
+			t.Fatalf("expected a straight vertical edge for %s", e.ID.String())
+		}
 	}
 }
 
@@ -307,8 +358,52 @@ func TestDistinctFlatEdgesReserveTheirTracks(t *testing.T) {
 	if err := Layout(&g); err != nil {
 		t.Fatal(err)
 	}
+	assertDistinctTracks(t, g.Edges)
+}
+
+func TestRankedStateTracksAndLabels(t *testing.T) {
+	for _, dir := range []string{"DOWN", "UP", "RIGHT", "LEFT"} {
+		t.Run(dir, func(t *testing.T) {
+			g := Graph{ID: StringID("root"), LayoutOptions: LayoutOptions{"elk.direction": dir, "d2.rankGroups": [][]string{{"playing", "paused"}}}}
+			for _, id := range []string{"ready", "playing", "paused", "finished"} {
+				g.Children = append(g.Children, rankNode(id, 96, 60))
+			}
+			for _, row := range [][3]string{{"ready", "playing", "play"}, {"playing", "paused", "pause"}, {"paused", "playing", "resume"}, {"playing", "finished", "finish"}} {
+				e := rankEdge(row[0], row[1])
+				e.Labels = []*Label{{Text: String(row[2]), Width: Float64(40), Height: Float64(20)}}
+				g.Edges = append(g.Edges, e)
+			}
+			if err := Layout(&g); err != nil {
+				t.Fatal(err)
+			}
+			assertDistinctTracks(t, g.Edges)
+			for _, e := range g.Edges {
+				l := e.Labels[0]
+				r := geometry.Rectangle{X: Number(l.X), Y: Number(l.Y), Width: Number(l.Width), Height: Number(l.Height)}
+				for _, other := range g.Edges {
+					if other == e {
+						continue
+					}
+					s := other.Sections[0]
+					points := append([]Point{*s.StartPoint}, s.BendPoints...)
+					points = append(points, *s.EndPoint)
+					for i := 1; i < len(points); i++ {
+						a, b := points[i-1], points[i]
+						if a.X == b.X && r.X < a.X && a.X < r.MaxX() && max(a.Y, b.Y) > r.Y && min(a.Y, b.Y) < r.MaxY() ||
+							a.Y == b.Y && r.Y < a.Y && a.Y < r.MaxY() && max(a.X, b.X) > r.X && min(a.X, b.X) < r.MaxX() {
+							t.Fatalf("label on %s crosses %s", e.ID.String(), other.ID.String())
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func assertDistinctTracks(t *testing.T, edges []*Edge) {
+	t.Helper()
 	var segments [][2]Point
-	for _, e := range g.Edges {
+	for _, e := range edges {
 		s := e.Sections[0]
 		points := append([]Point{*s.StartPoint}, s.BendPoints...)
 		points = append(points, *s.EndPoint)

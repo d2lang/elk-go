@@ -494,6 +494,34 @@ func (p *rankLayout) children(parent graph.NodeID) []graph.NodeID {
 	return result
 }
 
+func (p *rankLayout) overlapInFlow(a, b geometry.Rectangle) bool {
+	return a.X < b.MaxX()+p.layerGap && b.X < a.MaxX()+p.layerGap
+}
+
+// Keep consecutive blocks on the same native centerline together while their
+// new flow bands are disjoint. Narrowing boxes in one branch can otherwise
+// introduce a bend into a straight connection in a parallel branch.
+func (p *rankLayout) alignedSiblings(ids []graph.NodeID) []graph.NodeID {
+	first := ids[0]
+	if p.expanded[first] {
+		return ids[:1]
+	}
+	center := p.axis(p.old[first]).Center().Y
+	for i := 1; i < len(ids); i++ {
+		id := ids[i]
+		if p.expanded[id] || math.Abs(p.axis(p.old[id]).Center().Y-center) > 1e-7 {
+			return ids[:i]
+		}
+		foot := p.footprint(id, p.box[id])
+		for _, prior := range ids[:i] {
+			if p.overlapInFlow(foot, p.footprint(prior, p.box[prior])) {
+				return ids[:i]
+			}
+		}
+	}
+	return ids
+}
+
 func (p *rankLayout) pack(order []graph.NodeID) {
 	m := p.m
 	last := 0
@@ -567,12 +595,13 @@ func (p *rankLayout) pack(order []graph.NodeID) {
 		if p.reverse {
 			c = -c
 		}
-		r.X, r.Y = c-r.Width/2, 0
+		r.X = c - r.Width/2
+		r.Y = -r.Height / 2
 		p.box[id] = r
 	}
-	// Boxes have global flow coordinates and parent-relative transverse
-	// coordinates until the top-down pass. Compare actual extents, including
-	// container padding, when assigning transverse space to sibling branches.
+	// Start each block at a common transverse center. Siblings on disjoint
+	// ranks can keep their straight connections even when their sizes differ.
+	// Only move a block when it would overlap an earlier sibling's footprint.
 	for i := len(order) - 1; i >= 0; i-- {
 		id := order[i]
 		if !p.expanded[id] {
@@ -580,23 +609,30 @@ func (p *rankLayout) pack(order []graph.NodeID) {
 		}
 		ids := p.children(id)
 		var bounds geometry.Rectangle
-		for j, child := range ids {
-			r := p.box[child]
-			foot := p.footprint(child, r)
-			r.Y -= foot.Y
-			for _, prev := range ids[:j] {
-				s := p.footprint(prev, p.box[prev])
-				if foot.X < s.MaxX()+p.layerGap && s.X < foot.MaxX()+p.layerGap {
-					r.Y = math.Max(r.Y, s.MaxY()+gap-foot.Y)
+		for j := 0; j < len(ids); {
+			aligned := p.alignedSiblings(ids[j:])
+			shift := 0.
+			for _, child := range aligned {
+				foot := p.footprint(child, p.box[child])
+				for _, prev := range ids[:j] {
+					s := p.footprint(prev, p.box[prev])
+					if p.overlapInFlow(foot, s) {
+						shift = math.Max(shift, s.MaxY()+gap-foot.Y)
+					}
 				}
 			}
-			p.box[child] = r
-			r = p.footprint(child, r)
-			if j == 0 {
-				bounds = r
-			} else {
-				bounds = bounds.Union(r)
+			for i, child := range aligned {
+				r := p.box[child]
+				r.Y += shift
+				p.box[child] = r
+				foot := p.footprint(child, r)
+				if j+i == 0 {
+					bounds = foot
+				} else {
+					bounds = bounds.Union(foot)
+				}
 			}
+			j += len(aligned)
 		}
 		pad := graph.Get(&m.Node(id).Properties, core.Padding)
 		before, after, low, high := pad.Left, pad.Right, pad.Top, pad.Bottom
@@ -610,14 +646,19 @@ func (p *rankLayout) pack(order []graph.NodeID) {
 		}
 		flow := math.Max(bounds.Width+before+after, minFlow)
 		cross := math.Max(bounds.Height+low+high, minCross)
+		// Carry the children's shared transverse reference into the next
+		// packing level. Store their offsets relative to the resized parent
+		// so an entire subtree can move together if it encounters a sibling.
+		crossStart := bounds.Y - low
 		for _, child := range ids {
 			r := p.box[child]
-			r.Y += low
+			r.Y -= crossStart
 			p.box[child] = r
 		}
-		p.box[id] = geometry.Rectangle{X: bounds.X - before, Y: 0, Width: flow, Height: cross}
+		p.box[id] = geometry.Rectangle{X: bounds.X - before, Y: crossStart, Width: flow, Height: cross}
 	}
 	start := p.box[m.Root].X
+	p.box[m.Root].Y = 0
 	for _, id := range order {
 		if id != m.Root && !p.expanded[*m.Node(id).Parent] {
 			continue

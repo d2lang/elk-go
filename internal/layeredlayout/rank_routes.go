@@ -58,6 +58,28 @@ func (p *rankLayout) attachment(id graph.ShapeID, other graph.NodeID, flat bool,
 	return attachment{point, geometry.NewPoint(0, d)}
 }
 
+// Give distinct free edges their own border attachment when an earlier route
+// has already used the preferred stub. Fixed ports keep their declared point.
+func (p *rankLayout) freeAttachment(id graph.ShapeID, other graph.NodeID, flat bool, lane float64, used []trackSegment) attachment {
+	preferred := p.attachment(id, other, flat, lane)
+	if id.Kind != graph.NodeShape || !segmentOnTrack(preferred.point, preferred.point.Add(preferred.normal.Scale(5)), used) {
+		return preferred
+	}
+	toward := p.box[other].Center().Sub(preferred.point)
+	across := toward.X
+	if preferred.normal.X != 0 {
+		across = toward.Y
+	}
+	sign := math.Copysign(1, across)
+	for _, fraction := range []float64{.18, -.18, .32, -.32, .10, -.10, .40, -.40} {
+		v := p.attachment(id, other, flat, sign*fraction)
+		if !segmentOnTrack(v.point, v.point.Add(v.normal.Scale(5)), used) {
+			return v
+		}
+	}
+	return preferred
+}
+
 func (p *rankLayout) obstacles(a, b graph.NodeID) []geometry.Rectangle {
 	// Ancestors of either endpoint are permeable; the outermost rectangle
 	// of every other subtree is an obstacle, including an intact container.
@@ -137,6 +159,13 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 		}
 	}
 	var used []trackSegment
+	type routedLabel struct {
+		id        graph.LabelID
+		path      []geometry.Point
+		offset    geometry.Point
+		obstacles []geometry.Rectangle
+	}
+	var pending []routedLabel
 	bounds := p.box[m.Root]
 	for i := range m.Edges {
 		if monitor.Canceled() {
@@ -168,6 +197,7 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 				l := m.Label(id)
 				pt := move(l.Shape.Position())
 				l.Shape.SetLocation(pt.X, pt.Y)
+				bounds = bounds.Union(l.Shape.Rectangle().Move(offset))
 			}
 		} else {
 			key := pair(e)
@@ -176,7 +206,7 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 			seen[key]++
 			lane := float64(2*k+1-n) / float64(n) * 0.35
 			flat := math.Abs(p.axis(p.box[a]).Center().X-p.axis(p.box[b]).Center().X) < 1e-7
-			start, end := p.attachment(e.Sources[0], b, flat, lane), p.attachment(e.Targets[0], a, flat, lane)
+			start, end := p.freeAttachment(e.Sources[0], b, flat, lane, used), p.freeAttachment(e.Targets[0], a, flat, lane, used)
 			obstacles := p.obstacles(a, b)
 			// The initial port stubs force a legal exit/entry direction.
 			// Shorten them when neighbors are tightly spaced.
@@ -194,7 +224,8 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 					end.point.Y = s.Y
 				}
 			}
-			path := orthogonalRoute(s, t, obstacles, monitor)
+			horizontal := start.normal.X != 0 && end.normal.X != 0
+			path := orthogonalRoute(s, t, horizontal, obstacles, used, monitor)
 			freePorts := e.Sources[0].Kind == graph.NodeShape && e.Targets[0].Kind == graph.NodeShape
 			conflict := false
 			if flat && freePorts && len(path) > 0 {
@@ -211,6 +242,10 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 					path = detour[1:3]
 				}
 			}
+			if path == nil && len(used) > 0 && !monitor.Canceled() {
+				// Coincident fixed ports can require a shared stub.
+				path = orthogonalRoute(s, t, horizontal, obstacles, nil, monitor)
+			}
 			if path == nil {
 				if monitor.Canceled() {
 					return fmt.Errorf("d2.rankGroups: layout canceled")
@@ -219,10 +254,8 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 			}
 			points := append([]geometry.Point{start.point}, path...)
 			points = compactRoute(append(points, end.point))
-			if flat {
-				for j := 1; j < len(points); j++ {
-					used = append(used, trackSegment{points[j-1], points[j]})
-				}
+			for j := 1; j < len(points); j++ {
+				used = append(used, trackSegment{points[j-1], points[j]})
 			}
 			if len(points) == 1 {
 				points = append(points, points[0])
@@ -248,10 +281,7 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 			}
 			section.BendPointsPresent = len(section.BendPoints) > 0
 			for _, id := range e.Labels {
-				l := m.Label(id)
-				r := placeRankLabel(points, l.Shape.Width, l.Shape.Height, obstacles, labels)
-				labels = append(labels, r)
-				l.Shape.SetLocation(r.X-offset.X, r.Y-offset.Y)
+				pending = append(pending, routedLabel{id, points, offset, obstacles})
 			}
 			e.Properties.Delete(core.JunctionPoints.ID)
 		}
@@ -262,9 +292,19 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 				bounds = bounds.Union(geometry.Rectangle{X: v.X, Y: v.Y})
 			}
 		}
-		for _, id := range e.Labels {
-			bounds = bounds.Union(m.Label(id).Shape.Rectangle().Move(offset))
-		}
+	}
+	// Place edge labels after every track has been chosen. A label crossing a
+	// different edge erases that edge behind its text in the final drawing.
+	for _, seg := range used {
+		labels = append(labels, geometry.Rectangle{X: min(seg.a.X, seg.b.X) - 1, Y: min(seg.a.Y, seg.b.Y) - 1,
+			Width: math.Abs(seg.a.X-seg.b.X) + 2, Height: math.Abs(seg.a.Y-seg.b.Y) + 2})
+	}
+	for _, item := range pending {
+		l := m.Label(item.id)
+		r := placeRankLabel(item.path, l.Shape.Width, l.Shape.Height, item.obstacles, labels)
+		labels = append(labels, r)
+		l.Shape.SetLocation(r.X-item.offset.X, r.Y-item.offset.Y)
+		bounds = bounds.Union(r)
 	}
 	// Exterior routing tracks and labels are part of the drawing. Move the
 	// root coordinate origin when they extend to the left or above it.
@@ -300,18 +340,24 @@ func (p *rankLayout) route(monitor core.ProgressMonitor) error {
 type trackSegment struct{ a, b geometry.Point }
 
 func overlapsTrack(path []geometry.Point, used []trackSegment) bool {
-	const eps = 1e-7
 	for i := 1; i < len(path); i++ {
-		a, b := path[i-1], path[i]
-		for _, s := range used {
-			if math.Abs(a.Y-b.Y) < eps && math.Abs(a.Y-s.a.Y) < eps && math.Abs(a.Y-s.b.Y) < eps &&
-				min(max(a.X, b.X), max(s.a.X, s.b.X))-max(min(a.X, b.X), min(s.a.X, s.b.X)) > eps {
-				return true
-			}
-			if math.Abs(a.X-b.X) < eps && math.Abs(a.X-s.a.X) < eps && math.Abs(a.X-s.b.X) < eps &&
-				min(max(a.Y, b.Y), max(s.a.Y, s.b.Y))-max(min(a.Y, b.Y), min(s.a.Y, s.b.Y)) > eps {
-				return true
-			}
+		if segmentOnTrack(path[i-1], path[i], used) {
+			return true
+		}
+	}
+	return false
+}
+
+func segmentOnTrack(a, b geometry.Point, used []trackSegment) bool {
+	const eps = 1e-7
+	for _, s := range used {
+		if math.Abs(a.Y-b.Y) < eps && math.Abs(a.Y-s.a.Y) < eps && math.Abs(a.Y-s.b.Y) < eps &&
+			min(max(a.X, b.X), max(s.a.X, s.b.X))-max(min(a.X, b.X), min(s.a.X, s.b.X)) > eps {
+			return true
+		}
+		if math.Abs(a.X-b.X) < eps && math.Abs(a.X-s.a.X) < eps && math.Abs(a.X-s.b.X) < eps &&
+			min(max(a.Y, b.Y), max(s.a.Y, s.b.Y))-max(min(a.Y, b.Y), min(s.a.Y, s.b.Y)) > eps {
+			return true
 		}
 	}
 	return false
@@ -389,20 +435,27 @@ func clearSegment(a, b geometry.Point, obstacles []geometry.Rectangle) bool {
 	return true
 }
 
-func orthogonalRoute(a, b geometry.Point, obs []geometry.Rectangle, monitor core.ProgressMonitor) []geometry.Point {
-	if (a.X == b.X || a.Y == b.Y) && clearSegment(a, b, obs) {
+func orthogonalRoute(a, b geometry.Point, horizontal bool, obs []geometry.Rectangle, used []trackSegment, monitor core.ProgressMonitor) []geometry.Point {
+	clearRoute := func(a, b geometry.Point) bool {
+		return clearSegment(a, b, obs) && !segmentOnTrack(a, b, used)
+	}
+	if (a.X == b.X || a.Y == b.Y) && clearRoute(a, b) {
 		return []geometry.Point{a, b}
 	}
 	// Prefer a centered dogleg. Flat edges between immediate neighbors
 	// take the straight segment above, including across containment levels.
-	for _, path := range [][]geometry.Point{
+	paths := [][]geometry.Point{
 		{a, {X: a.X, Y: (a.Y + b.Y) / 2}, {X: b.X, Y: (a.Y + b.Y) / 2}, b},
 		{a, {X: (a.X + b.X) / 2, Y: a.Y}, {X: (a.X + b.X) / 2, Y: b.Y}, b},
 		{a, {X: a.X, Y: b.Y}, b}, {a, {X: b.X, Y: a.Y}, b},
-	} {
+	}
+	if horizontal {
+		paths[0], paths[1] = paths[1], paths[0]
+	}
+	for _, path := range paths {
 		clear := true
 		for i := 1; i < len(path); i++ {
-			if !clearSegment(path[i-1], path[i], obs) {
+			if !clearRoute(path[i-1], path[i]) {
 				clear = false
 				break
 			}
@@ -419,6 +472,13 @@ func orthogonalRoute(a, b geometry.Point, obs []geometry.Rectangle, monitor core
 	for _, r := range obs {
 		xs = append(xs, r.X-2, r.MaxX()+2)
 		ys = append(ys, r.Y-2, r.MaxY()+2)
+	}
+	for _, seg := range used {
+		if seg.a.X == seg.b.X {
+			xs = append(xs, seg.a.X-6, seg.a.X+6)
+		} else {
+			ys = append(ys, seg.a.Y-6, seg.a.Y+6)
+		}
 	}
 	sort.Float64s(xs)
 	xs = slices.Compact(xs)
@@ -454,7 +514,7 @@ func orthogonalRoute(a, b geometry.Point, obs []geometry.Rectangle, monitor core
 				continue
 			}
 			q := pos(k)
-			if !clearSegment(pt, q, obs) {
+			if !clearRoute(pt, q) {
 				continue
 			}
 			cost := v.cost + math.Abs(pt.X-q.X) + math.Abs(pt.Y-q.Y)
@@ -514,12 +574,12 @@ func placeRankLabel(path []geometry.Point, w, h float64, obstacles, labels []geo
 			}
 		}
 	}
-	if bestScore < 1e9 {
-		return best
-	}
 	// A crowded fixed-port fan can leave no free midpoint. Walk the
 	// occupied intervals on either axis to the closest free label position.
 	occupied := append(append([]geometry.Rectangle(nil), obstacles...), labels...)
+	if !slices.ContainsFunc(occupied, best.Intersects) {
+		return best
+	}
 	origin := best
 	cost := math.Inf(1)
 	for _, o := range occupied {
