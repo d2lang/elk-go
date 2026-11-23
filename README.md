@@ -67,6 +67,20 @@ if err := elk.Layout(graph); err != nil {
 }
 ```
 
+### Native self-loop routing
+
+Set `"elkgo.routeSelfLoops": true` on the root graph to enable exterior
+self-loops for Force, Stress, and Mr. Tree. The option works with both
+`Request` and the graph/JSON APIs. It is disabled by default for compatibility
+with ELK.js. Layered continues to use its own self-loop router.
+
+The three providers reserve space for loops and their measured labels during
+node placement and component packing. Supply edge label width and height as
+for other measured labels. The routes use the graph's self-loop spacing,
+distinct lanes for repeated loops, and explicit port attachments when
+provided. The returned node dimensions describe the original shape. Section
+coordinates follow the regular ELK edge coordinate options.
+
 ## Compatibility testing
 
 Normal tests are pure Go:

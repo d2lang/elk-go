@@ -19,6 +19,7 @@ import (
 
 	"github.com/d2lang/elk-go/internal/builtins"
 	"github.com/d2lang/elk-go/internal/core"
+	"github.com/d2lang/elk-go/internal/selfloops"
 )
 
 type oracleOptionMetadata struct {
@@ -53,6 +54,9 @@ func TestKnownLayoutOptionsParity(t *testing.T) {
 	for _, option := range reference {
 		want[option.ID] = option
 	}
+	// The native routing extension is the one additional option this port
+	// exposes. All options from the upstream registry still compare exactly.
+	want[selfloops.RouteOption] = oracleOptionMetadata{ID: selfloops.RouteOption, Type: "BOOLEAN", Targets: []string{"PARENTS"}}
 	got := make(map[string]*core.OptionData, len(registry.Options()))
 	for _, option := range registry.Options() {
 		got[option.ID] = option

@@ -18,6 +18,7 @@ import (
 	"github.com/d2lang/elk-go/internal/mrtree"
 	"github.com/d2lang/elk-go/internal/radial"
 	"github.com/d2lang/elk-go/internal/rectpacking"
+	"github.com/d2lang/elk-go/internal/selfloops"
 	"github.com/d2lang/elk-go/internal/spore"
 	"github.com/d2lang/elk-go/internal/stress"
 )
@@ -34,6 +35,9 @@ func RegisterOptions(registry *core.OptionRegistry) {
 	spore.RegisterOptions(registry)
 	rectpacking.RegisterOptions(registry)
 	registerCompatibilityOptions(registry)
+	if err := registry.Register(core.OptionData{ID: selfloops.RouteOption, Kind: core.BooleanOption, Targets: core.Parents}); err != nil {
+		panic(err)
+	}
 }
 
 // Register installs algorithms in the same relative order as the official

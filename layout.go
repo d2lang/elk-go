@@ -19,18 +19,23 @@ import (
 	"github.com/d2lang/elk-go/internal/builtins"
 	"github.com/d2lang/elk-go/internal/core"
 	"github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/selfloops"
 )
 
 // Layout computes layout in place. Like elkjs, it preserves the input graph's
 // element and slice order and adds computed shape and edge-route fields.
 func Layout(input *Graph) error {
-	options, _ := sharedRegistries()
+	options, algorithms := sharedRegistries()
 	// The codec and the model's arenas are reused by later calls (see
 	// core.ReleaseJSONCodec); nothing of either is referenced after the call.
 	codec := core.AcquireJSONCodec(options)
 	model, err := codec.Import(input)
 	if err != nil {
 		core.ReleaseJSONCodec(codec, nil)
+		return fmt.Errorf("import ELK graph: %w", err)
+	}
+	if err := codec.NormalizeLoopCoordinates(model, selfloops.SuppliedExteriorLoops(model, algorithms)); err != nil {
+		core.ReleaseJSONCodec(codec, model)
 		return fmt.Errorf("import ELK graph: %w", err)
 	}
 	if err := layoutModel(model); err != nil {

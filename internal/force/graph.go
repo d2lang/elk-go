@@ -15,6 +15,7 @@ import (
 	"github.com/d2lang/elk-go/internal/geometry"
 	"github.com/d2lang/elk-go/internal/graph"
 	"github.com/d2lang/elk-go/internal/javacompat"
+	"github.com/d2lang/elk-go/internal/selfloops"
 )
 
 // Particle is ELK's FParticle. Position is a center for nodes and the
@@ -32,8 +33,9 @@ func (particle *Particle) Radius() float64 { return forceVectorLength(particle.S
 
 type FNode struct {
 	Particle
-	ID     int
-	Origin graph.NodeID
+	ID       int
+	Origin   graph.NodeID
+	LoopPlan *selfloops.Plan
 }
 
 type FLabel struct {

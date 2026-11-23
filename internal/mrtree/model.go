@@ -11,6 +11,7 @@ package mrtree
 import (
 	"github.com/d2lang/elk-go/internal/geometry"
 	"github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/selfloops"
 )
 
 // These types retain the shape and incidence semantics of TGraph, TNode, and
@@ -36,11 +37,17 @@ type tGraph struct {
 	graphMax             geometry.Point
 }
 
+type nodeLoops struct {
+	*selfloops.Plan
+	shapeSize geometry.Point
+}
+
 type tNode struct {
 	id       int
 	origin   *graph.NodeID
 	position geometry.Point
 	size     geometry.Point
+	loops    *nodeLoops
 	props    graph.PropertyMap
 	outgoing []*tEdge
 	incoming []*tEdge
