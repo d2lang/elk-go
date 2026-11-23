@@ -101,10 +101,11 @@ func Recombine(components []*FGraph) *FGraph {
 		maxX, maxY := float64(math.MinInt32), float64(math.MinInt32)
 		for _, node := range component.Nodes {
 			priority += node.Priority
-			minX = math.Min(minX, node.Position.X-node.Size.X/2)
-			minY = math.Min(minY, node.Position.Y-node.Size.Y/2)
-			maxX = math.Max(maxX, node.Position.X+node.Size.X/2)
-			maxY = math.Max(maxY, node.Position.Y+node.Size.Y/2)
+			topLeft, bottomRight := node.OccupiedBounds()
+			minX = math.Min(minX, topLeft.X)
+			minY = math.Min(minY, topLeft.Y)
+			maxX = math.Max(maxX, bottomRight.X)
+			maxY = math.Max(maxY, bottomRight.Y)
 		}
 		component.Priority = priority
 		component.BBUpLeft = geometry.Point{X: minX, Y: minY}

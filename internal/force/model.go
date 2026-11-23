@@ -26,6 +26,7 @@ type abstractForceModel struct {
 	graph             *FGraph
 	random            *javacompat.Random
 	displacementBound float64
+	hasSelfLoops      bool
 }
 
 func (model *abstractForceModel) initialize(fgraph *FGraph) {
@@ -43,6 +44,7 @@ func (model *abstractForceModel) initialize(fgraph *FGraph) {
 			node.Position.Y = model.random.NextDouble() * positionScale
 		}
 	}
+	model.hasSelfLoops = fgraph.ArrangeSelfLoops()
 	for _, edge := range fgraph.Edges {
 		for index := 0; index < edge.RepulsivePower; index++ {
 			bendpoint := &FBendpoint{Particle: Particle{Priority: 1}, Edge: edge}
@@ -52,6 +54,15 @@ func (model *abstractForceModel) initialize(fgraph *FGraph) {
 		}
 		edge.DistributeBendpoints()
 	}
+}
+
+func (model *abstractForceModel) surfaceDistance(forcer, forcee *Particle, displacement geometry.Point, length float64) float64 {
+	distance := length - forcer.Radius() - forcee.Radius()
+	if model.hasSelfLoops && length > 0 {
+		distance -= forcer.loopExtent(displacement.X, displacement.Y, length)
+		distance -= forcee.loopExtent(-displacement.X, -displacement.Y, length)
+	}
+	return math.Max(0, distance)
 }
 
 func (model *abstractForceModel) iterationDone() {
@@ -115,7 +126,7 @@ func (model *eadesModel) displacement(forcer, forcee *Particle) geometry.Point {
 	avoidSamePosition(model.random, forcer, forcee)
 	displacement := forcee.Position.Sub(forcer.Position)
 	length := forceVectorLength(displacement)
-	distance := math.Max(0, length-forcer.Radius()-forcee.Radius())
+	distance := model.surfaceDistance(forcer, forcee, displacement, length)
 	connection := model.graph.Connection(forcer, forcee)
 	var force float64
 	if connection > 0 {
@@ -182,7 +193,7 @@ func (model *fruchtermanReingoldModel) displacement(forcer, forcee *Particle) ge
 	avoidSamePosition(model.random, forcer, forcee)
 	displacement := forcee.Position.Sub(forcer.Position)
 	length := forceVectorLength(displacement)
-	distance := math.Max(0, length-forcer.Radius()-forcee.Radius())
+	distance := model.surfaceDistance(forcer, forcee, displacement, length)
 	force := frRepulsive(distance, model.k) * float64(forcer.Priority)
 	if connection := model.graph.Connection(forcer, forcee); connection > 0 {
 		// Same-type conversions here and below are deliberate. The Go spec

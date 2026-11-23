@@ -19,6 +19,7 @@ import (
 	"github.com/d2lang/elk-go/internal/geometry"
 	"github.com/d2lang/elk-go/internal/graph"
 	"github.com/d2lang/elk-go/internal/javacompat"
+	"github.com/d2lang/elk-go/internal/selfloops"
 )
 
 // Importer is the Go counterpart of ELK 0.8.1's ElkGraphImporter. It retains
@@ -56,6 +57,7 @@ func (importer *Importer) ImportGraph() (*FGraph, error) {
 		fgraph.Random = javacompat.NewRandom(int64(seed))
 	}
 
+	loopPlans := selfloops.Collect(importer.model, importer.parent)
 	for index, nodeID := range parent.Children {
 		node := importer.model.Node(nodeID)
 		label := ""
@@ -69,8 +71,9 @@ func (importer *Importer) ImportGraph() (*FGraph, error) {
 				Size:     geometry.Point{X: math.Max(node.Shape.Width, 1), Y: math.Max(node.Shape.Height, 1)},
 				Priority: graph.Get(&node.Properties, Priority),
 			},
-			ID:     index,
-			Origin: nodeID,
+			ID:       index,
+			Origin:   nodeID,
+			LoopPlan: loopPlans[nodeID],
 		}
 		fnode.Particle.node = fnode
 		fgraph.Nodes = append(fgraph.Nodes, fnode)
@@ -92,8 +95,8 @@ func (importer *Importer) ImportGraph() (*FGraph, error) {
 			targetID := importer.model.ShapeNode(edge.Targets[0])
 			sourceNode, sourceFound := importer.nodes[sourceID]
 			targetNode, targetFound := importer.nodes[targetID]
-			// Edges across hierarchy bounds and self loops are unsupported and
-			// silently excluded by the Java importer.
+			// As in ELK, only edges between distinct local nodes become springs.
+			// An opted-in loop is stored on its owner’s LoopPlan.
 			if !sourceFound || !targetFound || sourceID == targetID {
 				continue
 			}
@@ -129,14 +132,21 @@ func (importer *Importer) ImportGraph() (*FGraph, error) {
 
 // ApplyLayout transfers FGraph coordinates back to the core graph, preserving
 // ELK's mutation order (nodes are offset before edge endpoints are clipped).
-func (importer *Importer) ApplyLayout(fgraph *FGraph) {
+func (importer *Importer) ApplyLayout(fgraph *FGraph) error {
+	return importer.applyLayout(fgraph, true)
+}
+
+func (importer *Importer) applyLayout(fgraph *FGraph, writeLoops bool) error {
 	minX, minY := float64(math.MaxInt32), float64(math.MaxInt32)
 	maxX, maxY := float64(math.MinInt32), float64(math.MinInt32)
+	hasLoops := false
 	for _, node := range fgraph.Nodes {
-		minX = math.Min(minX, node.Position.X-node.Size.X/2)
-		minY = math.Min(minY, node.Position.Y-node.Size.Y/2)
-		maxX = math.Max(maxX, node.Position.X+node.Size.X/2)
-		maxY = math.Max(maxY, node.Position.Y+node.Size.Y/2)
+		hasLoops = hasLoops || node.LoopPlan != nil
+		topLeft, bottomRight := node.OccupiedBounds()
+		minX = math.Min(minX, topLeft.X)
+		minY = math.Min(minY, topLeft.Y)
+		maxX = math.Max(maxX, bottomRight.X)
+		maxY = math.Max(maxY, bottomRight.Y)
 	}
 	for _, bendpoint := range fgraph.Bendpoints {
 		minX = math.Min(minX, bendpoint.Position.X-bendpoint.Size.X/2)
@@ -144,12 +154,28 @@ func (importer *Importer) ApplyLayout(fgraph *FGraph) {
 		maxX = math.Max(maxX, bendpoint.Position.X+bendpoint.Size.X/2)
 		maxY = math.Max(maxY, bendpoint.Position.Y+bendpoint.Size.Y/2)
 	}
+	width := maxX - minX + fgraph.Padding.Horizontal()
+	height := maxY - minY + fgraph.Padding.Vertical()
+	parentNode := importer.model.Node(importer.parent)
+	fixedSize := graph.Get(&parentNode.Properties, NodeSizeFixedGraphSize)
+	// Stress's initial Force pass supplies provisional positions. Validate the
+	// final layout only, before transferring its node positions or edge sections.
+	if writeLoops && hasLoops && fixedSize && (width > parentNode.Shape.Width+1e-8 || height > parentNode.Shape.Height+1e-8) {
+		return fmt.Errorf("self-loop layout with padding requires %.2f x %.2f, exceeding fixed parent %q (%.2f x %.2f)", width, height, parentNode.Identifier, parentNode.Shape.Width, parentNode.Shape.Height)
+	}
 	offset := geometry.Point{X: fgraph.Padding.Left - minX, Y: fgraph.Padding.Top - minY}
 
 	for _, fnode := range fgraph.Nodes {
 		node := importer.model.Node(fnode.Origin)
 		position := fnode.Position.Add(offset)
 		node.Shape.SetLocation(position.X-node.Shape.Width/2, position.Y-node.Shape.Height/2)
+		if plan := fnode.LoopPlan; plan != nil {
+			if writeLoops {
+				plan.Write(importer.model, node.Shape.X, node.Shape.Y)
+			} else {
+				plan.TranslateExisting(importer.model, node.Shape.X, node.Shape.Y)
+			}
+		}
 	}
 	for _, fedge := range fgraph.Edges {
 		edge := importer.model.Edge(fedge.Origin)
@@ -174,13 +200,12 @@ func (importer *Importer) ApplyLayout(fgraph *FGraph) {
 		label.Shape.SetLocation(position.X, position.Y)
 	}
 
-	width := maxX - minX + fgraph.Padding.Horizontal()
-	height := maxY - minY + fgraph.Padding.Vertical()
-	if !graph.Get(&importer.model.Node(importer.parent).Properties, NodeSizeFixedGraphSize) {
+	if !fixedSize {
 		resizeNode(importer.model, importer.parent, width, height)
 	}
-	graph.Set(&importer.model.Node(importer.parent).Properties, core.ChildAreaWidth, width-fgraph.Padding.Horizontal())
-	graph.Set(&importer.model.Node(importer.parent).Properties, core.ChildAreaHeight, height-fgraph.Padding.Vertical())
+	graph.Set(&parentNode.Properties, core.ChildAreaWidth, width-fgraph.Padding.Horizontal())
+	graph.Set(&parentNode.Properties, core.ChildAreaHeight, height-fgraph.Padding.Vertical())
+	return nil
 }
 
 // resizeNode mirrors ElkUtil.resizeNode(node, width, height, false, true).

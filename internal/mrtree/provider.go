@@ -20,6 +20,7 @@ import (
 	"github.com/d2lang/elk-go/internal/core"
 	"github.com/d2lang/elk-go/internal/geometry"
 	"github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/selfloops"
 )
 
 type Provider struct{}
@@ -98,6 +99,7 @@ func importGraph(model *graph.Model, parent graph.NodeID) *tGraph {
 	if g.direction == "UNDEFINED" {
 		g.direction = "DOWN"
 	}
+	plans := selfloops.Collect(model, parent)
 	byOrigin := make(map[graph.NodeID]*tNode, len(parentNode.Children))
 	for index, nodeID := range parentNode.Children {
 		origin := nodeID
@@ -108,6 +110,9 @@ func importGraph(model *graph.Model, parent graph.NodeID) *tGraph {
 			position: geometry.Point{X: node.Shape.X + node.Shape.Width/2, Y: node.Shape.Y + node.Shape.Height/2},
 			size:     geometry.Point{X: math.Max(node.Shape.Width, 1), Y: math.Max(node.Shape.Height, 1)},
 			props:    node.Properties.Clone(),
+		}
+		if plan := plans[nodeID]; plan != nil {
+			tn.loops = &nodeLoops{Plan: plan, shapeSize: tn.size}
 		}
 		g.nodes = append(g.nodes, tn)
 		byOrigin[nodeID] = tn
@@ -223,15 +228,69 @@ func layoutComponent(g *tGraph, monitor core.ProgressMonitor) {
 	computeFan(root)
 	computeTreeLevels(root)
 	orderNodes(root, g.weighting)
-	computeLevelHeights(root, g.direction)
 	computeNeighbors(root)
+	for _, node := range g.nodes {
+		if node.loops != nil {
+			node.reserveLoopSpace(g.direction)
+		}
+	}
+	computeLevelHeights(root, g.direction)
 	placeNodes(g, root)
 	applyDirectionAndNodePositions(g)
 	computeLevelCoordinates(g)
 	compactGraph(g)
+	// Placement and compaction used the whole occupied rectangle. Route ordinary
+	// edges against the actual node borders and retain the margins for packing.
+	for _, node := range g.nodes {
+		if loops := node.loops; loops != nil {
+			node.position.X += loops.Left
+			node.position.Y += loops.Top
+			node.size = loops.shapeSize
+		}
+	}
 	computeGraphBounds(g)
 	routeEdges(g)
 	monitor.Done()
+}
+
+// reserveLoopSpace chooses sides perpendicular to the tree's flow first. At
+// the outside of a level, prefer its free side. A root or leaf also has a
+// free side along the flow. Fixed ports take precedence in the loop planner.
+func (node *tNode) reserveLoopSpace(direction string) {
+	near, far, entry, exit := selfloops.West, selfloops.East, selfloops.North, selfloops.South
+	switch direction {
+	case "UP":
+		entry, exit = selfloops.South, selfloops.North
+	case "RIGHT":
+		near, far, entry, exit = selfloops.North, selfloops.South, selfloops.West, selfloops.East
+	case "LEFT":
+		near, far, entry, exit = selfloops.North, selfloops.South, selfloops.East, selfloops.West
+	}
+	if node.leftNeighbor != nil && node.rightNeighbor == nil {
+		near, far = far, near
+	}
+	sides := []selfloops.Side{near, far}
+	if node.root {
+		sides = append(sides, entry)
+	}
+	if node.leaf() {
+		sides = append(sides, exit)
+	}
+	loops := node.loops
+	loops.Arrange(sides)
+	node.size.X += loops.Left + loops.Right
+	node.size.Y += loops.Top + loops.Bottom
+}
+
+func (node *tNode) occupiedBounds() (min, max geometry.Point) {
+	min, max = node.position, node.position.Add(node.size)
+	if loops := node.loops; loops != nil {
+		min.X -= loops.Left
+		min.Y -= loops.Top
+		max.X += loops.Right
+		max.Y += loops.Bottom
+	}
+	return min, max
 }
 
 func treeify(g *tGraph) {
@@ -750,10 +809,11 @@ func computeGraphBounds(g *tGraph) {
 	g.graphMin = geometry.Point{X: math.Inf(1), Y: math.Inf(1)}
 	g.graphMax = geometry.Point{X: math.Inf(-1), Y: math.Inf(-1)}
 	for _, node := range g.nodes {
-		g.graphMin.X = math.Min(g.graphMin.X, node.position.X)
-		g.graphMin.Y = math.Min(g.graphMin.Y, node.position.Y)
-		g.graphMax.X = math.Max(g.graphMax.X, node.position.X+node.size.X)
-		g.graphMax.Y = math.Max(g.graphMax.Y, node.position.Y+node.size.Y)
+		min, max := node.occupiedBounds()
+		g.graphMin.X = math.Min(g.graphMin.X, min.X)
+		g.graphMin.Y = math.Min(g.graphMin.Y, min.Y)
+		g.graphMax.X = math.Max(g.graphMax.X, max.X)
+		g.graphMax.Y = math.Max(g.graphMax.Y, max.Y)
 	}
 }
 
@@ -1125,28 +1185,31 @@ func (gap *multiLevelGap) update(g *tGraph) {
 		case gap.neighborOne != nil && gap.neighborTwo == nil:
 			gap.onLastSide = true
 			node := gap.neighborOne
+			_, max := node.occupiedBounds()
 			switch g.direction {
 			case "LEFT":
-				coordinate := node.position.Y + node.size.Y + g.spacingEdgeNode*float64(index+1)
+				coordinate := max.Y + g.spacingEdgeNode*float64(index+1)
 				first = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: coordinate}
 				second = geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: coordinate}
 			case "RIGHT":
-				coordinate := node.position.Y + node.size.Y + g.spacingEdgeNode*float64(index+1)
+				coordinate := max.Y + g.spacingEdgeNode*float64(index+1)
 				first = geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: coordinate}
 				second = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: coordinate}
 			case "UP":
-				coordinate := node.position.X + node.size.X + g.spacingEdgeNode*float64(index+1)
+				coordinate := max.X + g.spacingEdgeNode*float64(index+1)
 				first = geometry.Point{X: coordinate, Y: node.levelMax + g.spacingEdgeNode}
 				second = geometry.Point{X: coordinate, Y: node.levelMin - g.spacingEdgeNode}
 			default:
-				coordinate := node.position.X + node.size.X + g.spacingEdgeNode*float64(index+1)
+				coordinate := max.X + g.spacingEdgeNode*float64(index+1)
 				first = geometry.Point{X: coordinate, Y: node.levelMin - g.spacingEdgeNode}
 				second = geometry.Point{X: coordinate, Y: node.levelMax + g.spacingEdgeNode}
 			}
 		case gap.neighborOne != nil && gap.neighborTwo != nil:
 			one, two := gap.neighborOne, gap.neighborTwo
+			_, oneMax := one.occupiedBounds()
+			twoMin, _ := two.occupiedBounds()
 			if g.direction == "LEFT" || g.direction == "RIGHT" {
-				coordinate := two.position.Y*interpolation + (one.position.Y+one.size.Y)*(1-interpolation)
+				coordinate := twoMin.Y*interpolation + oneMax.Y*(1-interpolation)
 				if g.direction == "LEFT" {
 					first = geometry.Point{X: one.levelMax + g.spacingEdgeNode, Y: coordinate}
 					second = geometry.Point{X: one.levelMin - g.spacingEdgeNode, Y: coordinate}
@@ -1155,7 +1218,7 @@ func (gap *multiLevelGap) update(g *tGraph) {
 					second = geometry.Point{X: one.levelMax + g.spacingEdgeNode, Y: coordinate}
 				}
 			} else {
-				coordinate := two.position.X*interpolation + (one.position.X+one.size.X)*(1-interpolation)
+				coordinate := twoMin.X*interpolation + oneMax.X*(1-interpolation)
 				if g.direction == "UP" {
 					first = geometry.Point{X: coordinate, Y: one.levelMax + g.spacingEdgeNode}
 					second = geometry.Point{X: coordinate, Y: one.levelMin - g.spacingEdgeNode}
@@ -1167,21 +1230,22 @@ func (gap *multiLevelGap) update(g *tGraph) {
 		default:
 			gap.onFirstSide = true
 			node := gap.neighborTwo
+			min, _ := node.occupiedBounds()
 			switch g.direction {
 			case "LEFT":
-				coordinate := node.position.Y - g.spacingEdgeNode*float64(index+1)
+				coordinate := min.Y - g.spacingEdgeNode*float64(index+1)
 				first = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: coordinate}
 				second = geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: coordinate}
 			case "RIGHT":
-				coordinate := node.position.Y - g.spacingEdgeNode*float64(index+1)
+				coordinate := min.Y - g.spacingEdgeNode*float64(index+1)
 				first = geometry.Point{X: node.levelMin - g.spacingEdgeNode, Y: coordinate}
 				second = geometry.Point{X: node.levelMax + g.spacingEdgeNode, Y: coordinate}
 			case "UP":
-				coordinate := node.position.X - g.spacingEdgeNode*float64(index+1)
+				coordinate := min.X - g.spacingEdgeNode*float64(index+1)
 				first = geometry.Point{X: coordinate, Y: node.levelMax + g.spacingEdgeNode}
 				second = geometry.Point{X: coordinate, Y: node.levelMin - g.spacingEdgeNode}
 			default:
-				coordinate := node.position.X - g.spacingEdgeNode*float64(index+1)
+				coordinate := min.X - g.spacingEdgeNode*float64(index+1)
 				first = geometry.Point{X: coordinate, Y: node.levelMin - g.spacingEdgeNode}
 				second = geometry.Point{X: coordinate, Y: node.levelMax + g.spacingEdgeNode}
 			}
@@ -1287,9 +1351,9 @@ func shouldSkipMultiLevelGap(edge *tEdge, levelNodes []*tNode, gapIndex int, hor
 		start = edge.bendPoints[len(edge.bendPoints)-1]
 	}
 	lastNode := levelNodes[len(levelNodes)-1]
-	last := lastNode.position.Add(lastNode.size)
+	_, last := lastNode.occupiedBounds()
 	firstNode := levelNodes[0]
-	first := firstNode.position.Add(firstNode.size)
+	_, first := firstNode.occupiedBounds()
 	if horizontal {
 		if gapIndex >= len(levelNodes)-1 && start.Y > last.Y && edge.target.position.Y > last.Y {
 			return true
@@ -1323,9 +1387,10 @@ func routeCycleEdge(g *tGraph, edge *tEdge, sideOneEdges, sideTwoEdges, incoming
 		sideTwoEdges++
 		bendCoordinate = math.Inf(-1)
 		for _, node := range g.nodes {
-			coordinate := node.position.X + node.size.X + g.spacingEdgeNode*float64(sideTwoEdges)
+			_, max := node.occupiedBounds()
+			coordinate := max.X + g.spacingEdgeNode*float64(sideTwoEdges)
 			if horizontal {
-				coordinate = node.position.Y + node.size.Y + g.spacingEdgeNode*float64(sideTwoEdges)
+				coordinate = max.Y + g.spacingEdgeNode*float64(sideTwoEdges)
 			}
 			bendCoordinate = math.Max(bendCoordinate, coordinate)
 		}
@@ -1333,9 +1398,10 @@ func routeCycleEdge(g *tGraph, edge *tEdge, sideOneEdges, sideTwoEdges, incoming
 		sideOneEdges++
 		bendCoordinate = math.Inf(1)
 		for _, node := range g.nodes {
-			coordinate := node.position.X - g.spacingEdgeNode*float64(sideOneEdges)
+			min, _ := node.occupiedBounds()
+			coordinate := min.X - g.spacingEdgeNode*float64(sideOneEdges)
 			if horizontal {
-				coordinate = node.position.Y - g.spacingEdgeNode*float64(sideOneEdges)
+				coordinate = min.Y - g.spacingEdgeNode*float64(sideOneEdges)
 			}
 			bendCoordinate = math.Min(bendCoordinate, coordinate)
 		}
@@ -1600,10 +1666,11 @@ func packComponents(components []*tGraph) *tGraph {
 		box := bounds{min: geometry.Point{X: float64(math.MaxInt32), Y: float64(math.MaxInt32)}, max: geometry.Point{X: float64(math.MinInt32), Y: float64(math.MinInt32)}}
 		for _, node := range component.nodes {
 			priorities[component] += graph.Get(&node.props, Priority)
-			box.min.X = math.Min(box.min.X, node.position.X)
-			box.min.Y = math.Min(box.min.Y, node.position.Y)
-			box.max.X = math.Max(box.max.X, node.position.X+node.size.X)
-			box.max.Y = math.Max(box.max.Y, node.position.Y+node.size.Y)
+			min, max := node.occupiedBounds()
+			box.min.X = math.Min(box.min.X, min.X)
+			box.min.Y = math.Min(box.min.Y, min.Y)
+			box.max.X = math.Max(box.max.X, max.X)
+			box.max.Y = math.Max(box.max.Y, max.Y)
 		}
 		boxes[component] = box
 	}
@@ -1678,6 +1745,7 @@ func normalizeAndApplyPadding(g *tGraph) {
 }
 
 func applyLayout(model *graph.Model, parent graph.NodeID, g *tGraph) error {
+	hasLoops := false
 	minX, minY := float64(math.MaxInt32), float64(math.MaxInt32)
 	maxX, maxY := float64(math.MinInt32), float64(math.MinInt32)
 	for _, node := range g.nodes {
@@ -1692,6 +1760,10 @@ func applyLayout(model *graph.Model, parent graph.NodeID, g *tGraph) error {
 		}
 		origin := model.Node(*node.origin)
 		origin.Shape.SetLocation(node.position.X, node.position.Y)
+		if node.loops != nil {
+			hasLoops = true
+			node.loops.Write(model, node.position.X, node.position.Y)
+		}
 		origin.Properties.CopyFrom(&node.props)
 	}
 	for _, edge := range g.edges {
@@ -1724,6 +1796,15 @@ func applyLayout(model *graph.Model, parent graph.NodeID, g *tGraph) error {
 	root := model.Node(parent)
 	width := maxX - minX + g.padding.Left + g.padding.Right
 	height := maxY - minY + g.padding.Top + g.padding.Bottom
+	if hasLoops {
+		// The upstream extent above is center-based. With the opt-in geometry,
+		// include each node's full occupied rectangle, including loop labels.
+		width = g.graphMax.X - g.graphMin.X + g.padding.Left + g.padding.Right
+		height = g.graphMax.Y - g.graphMin.Y + g.padding.Top + g.padding.Bottom
+		if g.fixedGraphSize && (width > root.Shape.Width+1e-8 || height > root.Shape.Height+1e-8) {
+			return fmt.Errorf("self-loop layout with padding requires %.2f x %.2f, exceeding fixed parent %q (%.2f x %.2f)", width, height, root.Identifier, root.Shape.Width, root.Shape.Height)
+		}
+	}
 	if !g.fixedGraphSize {
 		root.Shape.SetDimensions(width, height)
 	}

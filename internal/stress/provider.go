@@ -40,16 +40,23 @@ func (*Provider) Layout(model *graph.Model, parent graph.NodeID, monitor core.Pr
 	}
 	components := force.Split(fgraph)
 	for _, component := range components {
+		if component.ArrangeSelfLoops() {
+			if err := fitPinnedLoops(model, component); err != nil {
+				return err
+			}
+		}
 		if len(component.Nodes) <= 1 {
 			continue
 		}
 		majorization := &Majorization{}
 		majorization.Initialize(model, component)
 		majorization.Execute()
+		component.SeparateSelfLoopFootprints(func(node *force.FNode) bool {
+			return !graph.Get(&model.Node(node.Origin).Properties, Fixed)
+		}, majorization.dimension != DimensionY, majorization.dimension != DimensionX)
 		for _, label := range component.Labels {
 			label.RefreshPosition()
 		}
 	}
-	importer.ApplyLayout(force.Recombine(components))
-	return nil
+	return importer.ApplyLayout(force.Recombine(components))
 }

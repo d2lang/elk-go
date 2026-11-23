@@ -56,6 +56,10 @@ func Register(registry *core.AlgorithmRegistry) error {
 }
 
 func (*Provider) Layout(model *graph.Model, parent graph.NodeID, monitor core.ProgressMonitor) error {
+	return layout(model, parent, monitor, true)
+}
+
+func layout(model *graph.Model, parent graph.NodeID, monitor core.ProgressMonitor, writeLoops bool) error {
 	if !graph.Get(&model.Node(parent).Properties, OmitNodeMicroLayout) {
 		nodespacing.CalculateLabelAndNodeSizes(model, parent, nil)
 	}
@@ -76,14 +80,17 @@ func (*Provider) Layout(model *graph.Model, parent graph.NodeID, monitor core.Pr
 			return fmt.Errorf("unknown force model %q", component.Model)
 		}
 		selected.layout(component, monitor.Subtask(1/float64(len(components))))
+		component.ArrangeSelfLoops()
+		component.SeparateSelfLoopFootprints(nil, true, true)
 	}
-	importer.ApplyLayout(Recombine(components))
-	return nil
+	return importer.applyLayout(Recombine(components), writeLoops)
 }
 
 // InitialLayout runs the exact force initialization used by ELK Stress when
 // interactive mode is disabled. It is exported only to the sibling stress
 // package within this module.
 func InitialLayout(model *graph.Model, parent graph.NodeID, monitor core.ProgressMonitor) error {
-	return (&Provider{}).Layout(model, parent, monitor)
+	// The Stress solver reimports this model and changes the positions. Publish its
+	// loop sections only after that final placement, leaving them eligible for import.
+	return layout(model, parent, monitor, false)
 }

@@ -58,13 +58,45 @@ func (majorization *Majorization) Initialize(model *graph.Model, fgraph *force.F
 		majorization.dijkstra(source, majorization.apsp[source.ID])
 	}
 	majorization.w = make([][]float64, n)
-	for i := 0; i < n; i++ {
+	for _, first := range fgraph.Nodes {
+		i := first.ID
 		majorization.w[i] = make([]float64, n)
-		for j := 0; j < n; j++ {
+		for _, second := range fgraph.Nodes {
+			j := second.ID
 			distance := majorization.apsp[i][j]
+			if i != j && (first.LoopPlan != nil || second.LoopPlan != nil) {
+				distance = math.Max(distance, loopClearanceDistance(first, second, fgraph.SpacingNodeNode))
+				majorization.apsp[i][j] = distance
+			}
 			majorization.w[i][j] = 1 / (distance * distance)
 		}
 	}
+}
+
+// Stress target distances are center-to-center. Reserve the facing sides of
+// the two footprints along their initial line of centers so that incident
+// edges can stay short when the loops face away from their neighbors.
+func loopClearanceDistance(first, second *force.FNode, gap float64) float64 {
+	direction := second.Position.Sub(first.Position).Normalize()
+	firstMin, firstMax := first.OccupiedBounds()
+	secondMin, secondMax := second.OccupiedBounds()
+	var x, y = math.Inf(1), math.Inf(1)
+	if direction.X > 0 {
+		x = (firstMax.X - first.Position.X + second.Position.X - secondMin.X + gap) / direction.X
+	} else if direction.X < 0 {
+		x = (secondMax.X - second.Position.X + first.Position.X - firstMin.X + gap) / -direction.X
+	}
+	if direction.Y > 0 {
+		y = (firstMax.Y - first.Position.Y + second.Position.Y - secondMin.Y + gap) / direction.Y
+	} else if direction.Y < 0 {
+		y = (secondMax.Y - second.Position.Y + first.Position.Y - firstMin.Y + gap) / -direction.Y
+	}
+	if direction == (geometry.Point{}) {
+		// Coincident centers have no preferred direction. The hard clearance
+		// pass separates these even when the stress gradient is zero.
+		return 0
+	}
+	return math.Min(x, y)
 }
 
 func (majorization *Majorization) Execute() {
