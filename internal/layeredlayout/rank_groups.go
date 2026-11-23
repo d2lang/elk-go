@@ -30,7 +30,8 @@ type rankLayout struct {
 	rank              []int
 	loopBounds        map[graph.NodeID]geometry.Rectangle
 	old, box          []geometry.Rectangle // world coordinates
-	flatOrder         [][][2]graph.NodeID  // edges projected to children of their LCA
+	crossRankEdge     []bool
+	flatOrder         [][][2]graph.NodeID // edges projected to children of their LCA
 	gap, layerGap     float64
 }
 
@@ -41,7 +42,7 @@ func newRankLayout(m *graph.Model, raw string) (*rankLayout, error) {
 	}
 	n := len(m.Nodes)
 	p := &rankLayout{m: m, expanded: make([]bool, n), group: make([]graph.NodeID, n),
-		owner: make([]graph.NodeID, n), rank: make([]int, n), old: make([]geometry.Rectangle, n), box: make([]geometry.Rectangle, n), flatOrder: make([][][2]graph.NodeID, n)}
+		crossRankEdge: make([]bool, n), owner: make([]graph.NodeID, n), rank: make([]int, n), old: make([]geometry.Rectangle, n), box: make([]geometry.Rectangle, n), flatOrder: make([][][2]graph.NodeID, n)}
 	ids := make(map[string]graph.NodeID, n)
 	for i := range m.Nodes {
 		id := graph.NodeID(i)
@@ -249,6 +250,7 @@ func (p *rankLayout) rankGraph() ([]graph.NodeID, []rankArc, []graph.NodeID) {
 			p.flatOrder[lca] = append(p.flatOrder[lca], [2]graph.NodeID{a, b})
 			continue
 		}
+		p.crossRankEdge[src], p.crossRankEdge[dst] = true, true
 		arcs = append(arcs, rankArc{group[a], group[b], 1, false})
 	}
 	for _, id := range p.blocks {
@@ -481,15 +483,39 @@ func (p *rankLayout) children(parent graph.NodeID) []graph.NodeID {
 			add(b)
 		}
 	}
+	// A two-node flat component can be packed in either direction. Put
+	// its only connection to another rank on the shared baseline. This
+	// keeps the entry and exit of a state with a reciprocal peer straight.
+	only := func(links []graph.NodeID, other graph.NodeID) bool {
+		for _, child := range links {
+			if child != other {
+				return false
+			}
+		}
+		return true
+	}
+	start := func(id graph.NodeID) {
+		if seen[id] {
+			return
+		}
+		links := adj[id]
+		if len(links) != 0 && !p.crossRankEdge[id] {
+			peer := links[0]
+			if p.crossRankEdge[peer] && only(links, peer) && only(adj[peer], id) {
+				id = peer
+			}
+		}
+		add(id)
+	}
 	// Starting at the end of a flat path avoids folding its second half
 	// behind the first. Isolated siblings retain their crossing order.
 	for _, id := range ids {
 		if len(adj[id]) < 2 {
-			add(id)
+			start(id)
 		}
 	}
 	for _, id := range ids {
-		add(id)
+		start(id)
 	}
 	return result
 }

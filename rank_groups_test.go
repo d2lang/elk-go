@@ -422,3 +422,42 @@ func assertDistinctTracks(t *testing.T, edges []*Edge) {
 		segments = append(segments, current...)
 	}
 }
+
+func TestSameRankReciprocalPeerKeepsThroughConnectionsStraight(t *testing.T) {
+	for _, dir := range []string{"DOWN", "UP", "RIGHT", "LEFT"} {
+		t.Run(dir, func(t *testing.T) {
+			ready, playing := rankNode("ready", 89, 66), rankNode("playing", 98, 66)
+			paused, finished := rankNode("paused", 96, 66), rankNode("finished", 104, 66)
+			g := Graph{ID: StringID("root"), LayoutOptions: LayoutOptions{
+				"elk.direction": dir, "d2.rankGroups": [][]string{{"playing", "paused"}},
+			}, Children: []*Node{ready, playing, paused, finished},
+				Edges: []*Edge{rankEdge("ready", "playing"), rankEdge("playing", "paused"), rankEdge("paused", "playing"), rankEdge("playing", "finished")}}
+			for i, text := range []string{"play", "pause", "resume", "finish"} {
+				g.Edges[i].Labels = []*Label{{Text: String(text), Width: Float64(float64(len(text)) * 8), Height: Float64(21)}}
+			}
+			if err := Layout(&g); err != nil {
+				t.Fatal(err)
+			}
+			center := func(n *Node) float64 {
+				r := rankRect(n)
+				if dir == "UP" || dir == "DOWN" {
+					return r.Center().X
+				}
+				return r.Center().Y
+			}
+			if center(ready) != center(playing) || center(playing) != center(finished) {
+				t.Fatalf("through lane centers: %v, %v, %v", center(ready), center(playing), center(finished))
+			}
+			for _, e := range []*Edge{g.Edges[0], g.Edges[3]} {
+				if len(e.Sections) != 1 || len(e.Sections[0].BendPoints) != 0 {
+					t.Fatalf("%s should be straight: %+v", e.ID.String(), e.Sections)
+				}
+			}
+			for _, e := range g.Edges[1:3] {
+				if len(e.Sections) != 1 {
+					t.Fatalf("missing transition: %s", e.ID.String())
+				}
+			}
+		})
+	}
+}

@@ -383,6 +383,12 @@ func (p *rankLayout) flatTrack(a, b graph.NodeID, ordinal int, spacing float64, 
 		}
 		return geometry.NewPoint(flow, cross)
 	}
+	fractions := []float64{0, -.2, .2, -.35, .35, -.1, .1, -.28, .28}
+	if p.crossRankEdge[a] || p.crossRankEdge[b] {
+		// Leave the center port available for the connection to the adjacent
+		// rank. A returning flat edge can reach both faces off-center.
+		fractions[0], fractions[1] = fractions[1], fractions[0]
+	}
 	// Every rejected occupied lane has a previously reserved segment. For
 	// visually crowded ranks also stagger attachments along the border.
 	for k := 0; k <= len(used)+1; k++ {
@@ -392,7 +398,7 @@ func (p *rankLayout) flatTrack(a, b graph.NodeID, ordinal int, spacing float64, 
 			if !top {
 				start, end, track = r1.MaxX(), r2.MaxX(), high+spacing*float64(k+1)
 			}
-			for _, fraction := range []float64{0, -.2, .2, -.35, .35, -.1, .1, -.28, .28} {
+			for _, fraction := range fractions {
 				y1, y2 := r1.Center().Y+fraction*r1.Height, r2.Center().Y+fraction*r2.Height
 				path := []geometry.Point{xy(start, y1), xy(track, y1), xy(track, y2), xy(end, y2)}
 				if !overlapsTrack(path, used) && clearSegment(path[0], path[1], obstacles) && clearSegment(path[1], path[2], obstacles) && clearSegment(path[2], path[3], obstacles) {
