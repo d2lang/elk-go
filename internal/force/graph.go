@@ -33,9 +33,10 @@ func (particle *Particle) Radius() float64 { return forceVectorLength(particle.S
 
 type FNode struct {
 	Particle
-	ID       int
-	Origin   graph.NodeID
-	LoopPlan *selfloops.Plan
+	ID               int
+	Origin           graph.NodeID
+	compoundEndpoint bool
+	LoopPlan         *selfloops.Plan
 }
 
 type FLabel struct {

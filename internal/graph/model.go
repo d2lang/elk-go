@@ -123,12 +123,15 @@ type Label struct {
 type Edge struct {
 	Identifier        string
 	IdentifierPresent bool
-	Properties        PropertyMap
-	Labels            []LabelID
-	ContainingNode    *NodeID
-	Sources           []ShapeID
-	Targets           []ShapeID
-	Sections          []SectionID
+	// PlacementProjection marks a temporary sibling connection used while
+	// placing the subtrees of a cross-container edge.
+	PlacementProjection bool
+	Properties          PropertyMap
+	Labels              []LabelID
+	ContainingNode      *NodeID
+	Sources             []ShapeID
+	Targets             []ShapeID
+	Sections            []SectionID
 }
 
 type EdgeSection struct {

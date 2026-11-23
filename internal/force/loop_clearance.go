@@ -9,20 +9,20 @@ import (
 	"github.com/d2lang/elk-go/internal/geometry"
 )
 
-// SeparateSelfLoopFootprints reserves the space occupied by loops after the
-// iterative solver. Its equilibrium distances do not guarantee that node,
-// loop and label rectangles are disjoint. Keep fixed nodes as obstacles and
-// move each remaining node only when its footprint conflicts with a loop.
+// SeparateOccupiedFootprints keeps loop footprints and the endpoints of a
+// projected hierarchy edge clear. A solver’s equilibrium distances between
+// centers can otherwise put an external node inside an unrelated container.
+// Keep fixed nodes as obstacles and move only conflicting footprints.
 // Movement is limited to the axes the selected layout permits.
-func (g *FGraph) SeparateSelfLoopFootprints(canMove func(*FNode) bool, moveX, moveY bool) {
-	hasLoops := false
+func (g *FGraph) SeparateOccupiedFootprints(canMove func(*FNode) bool, moveX, moveY bool) {
+	needsClearance := false
 	for _, node := range g.Nodes {
-		if node.LoopPlan != nil {
-			hasLoops = true
+		if node.LoopPlan != nil || node.compoundEndpoint {
+			needsClearance = true
 			break
 		}
 	}
-	if !hasLoops || len(g.Nodes) < 2 || !moveX && !moveY {
+	if !needsClearance || len(g.Nodes) < 2 || !moveX && !moveY {
 		return
 	}
 
@@ -51,7 +51,7 @@ func (g *FGraph) SeparateSelfLoopFootprints(canMove func(*FNode) bool, moveX, mo
 			overlapX := dx.min < 0 && dx.max > 0
 			overlapY := dy.min < 0 && dy.max > 0
 			_, displaced := moved[other]
-			conflict = conflict || overlapX && overlapY && (node.LoopPlan != nil || other.LoopPlan != nil || displaced)
+			conflict = conflict || overlapX && overlapY && (node.LoopPlan != nil || other.LoopPlan != nil || node.compoundEndpoint || other.compoundEndpoint || displaced)
 			if moveX && overlapY {
 				x = append(x, dx)
 			}

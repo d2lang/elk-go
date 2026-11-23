@@ -54,9 +54,10 @@ func TestKnownLayoutOptionsParity(t *testing.T) {
 	for _, option := range reference {
 		want[option.ID] = option
 	}
-	// The native routing extension is the one additional option this port
-	// exposes. All options from the upstream registry still compare exactly.
-	want[selfloops.RouteOption] = oracleOptionMetadata{ID: selfloops.RouteOption, Type: "BOOLEAN", Targets: []string{"PARENTS"}}
+	// The two native routing extensions supplement upstream metadata.
+	for _, id := range []string{selfloops.RouteOption, core.RouteCrossContainerEdges.ID} {
+		want[id] = oracleOptionMetadata{ID: id, Type: "BOOLEAN", Targets: []string{"PARENTS"}}
+	}
 	got := make(map[string]*core.OptionData, len(registry.Options()))
 	for _, option := range registry.Options() {
 		got[option.ID] = option

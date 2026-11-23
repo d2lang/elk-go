@@ -34,7 +34,7 @@ func Layout(input *Graph) error {
 		core.ReleaseJSONCodec(codec, nil)
 		return fmt.Errorf("import ELK graph: %w", err)
 	}
-	if err := codec.NormalizeLoopCoordinates(model, selfloops.SuppliedExteriorLoops(model, algorithms)); err != nil {
+	if err := codec.NormalizeSuppliedCoordinates(model, selfloops.SuppliedExteriorLoops(model, algorithms), algorithms); err != nil {
 		core.ReleaseJSONCodec(codec, model)
 		return fmt.Errorf("import ELK graph: %w", err)
 	}
