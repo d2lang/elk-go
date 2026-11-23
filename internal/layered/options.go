@@ -444,6 +444,7 @@ var (
 	// Core options inherited by ELK Layered. Defaults are the effective
 	// Layered 0.8.1 defaults, not the generic core metadata defaults.
 	Algorithm             = basegraph.PropertyWithDefault("org.eclipse.elk.algorithm", func() string { return "layered" })
+	RankGroups            = basegraph.NewProperty[string]("d2.rankGroups")
 	DirectionOption       = basegraph.PropertyWithDefault("org.eclipse.elk.direction", func() Direction { return DirectionUndefined })
 	Hierarchy             = basegraph.PropertyWithDefault("org.eclipse.elk.hierarchyHandling", func() HierarchyHandling { return HierarchySeparateChildren })
 	Padding               = basegraph.CloneablePropertyWithConstantDefault("org.eclipse.elk.padding", func() geometry.Spacing { return geometry.UniformSpacing(12) })

@@ -358,6 +358,15 @@ func (r *Request) edgeOffset(edge EdgeRef) geometry.Point {
 	return r.offset
 }
 
+// EdgeLabelBounds returns the label rectangle in the same coordinate system
+// as the edge sections, matching Layout(graph).
+func (r *Request) EdgeLabelBounds(edge EdgeRef, index int) (x, y, width, height float64) {
+	offset := r.edgeOffset(edge)
+	id := r.model.Edge(graph.EdgeID(edge)).Labels[index]
+	s := r.model.Label(id).Shape
+	return s.X + offset.X, s.Y + offset.Y, s.Width, s.Height
+}
+
 // Section returns the start and end points Layout(graph) writes into section
 // index of the edge, and its number of bend points (it leaves BendPoints nil
 // when there are none).

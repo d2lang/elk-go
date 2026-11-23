@@ -43,6 +43,7 @@ func RegisterOptions(registry *core.OptionRegistry) {
 	parents := core.Parents
 	allShapes := core.Parents | core.Nodes | core.Edges | core.Ports | core.Labels
 	options := []core.OptionData{
+		{ID: RankGroups.ID, Kind: core.StringOption, Targets: parents},
 		{ID: EdgeRoutingOption.ID, Kind: core.EnumOption, Targets: parents, EnumValues: []string{"UNDEFINED", "POLYLINE", "ORTHOGONAL", "SPLINES"}},
 		{ID: RandomSeed.ID, Kind: core.IntegerOption, Targets: parents},
 		{ID: SeparateComponents.ID, Kind: core.BooleanOption, Targets: parents},

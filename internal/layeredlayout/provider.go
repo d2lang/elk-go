@@ -46,6 +46,16 @@ func Register(registry *core.AlgorithmRegistry) error {
 }
 
 func (*Provider) Layout(model *basegraph.Model, parent basegraph.NodeID, monitor core.ProgressMonitor) error {
+	var ranks *rankLayout
+	if parent == model.Root {
+		if raw := basegraph.Get(&model.Node(parent).Properties, layered.RankGroups); raw != "" {
+			var err error
+			ranks, err = newRankLayout(model, raw)
+			if err != nil {
+				return err
+			}
+		}
+	}
 	importer := layered.NewElkGraphImporter(model)
 	arena, topGraph, err := importer.ImportGraph(parent)
 	if err != nil {
@@ -58,6 +68,9 @@ func (*Provider) Layout(model *basegraph.Model, parent basegraph.NodeID, monitor
 	// the arena and its processors' scratch half-updated, so it is dropped
 	// with the call instead.
 	layered.ReleaseLGraphArena(arena)
+	if err == nil && ranks != nil {
+		err = ranks.layout(monitor)
+	}
 	return err
 }
 

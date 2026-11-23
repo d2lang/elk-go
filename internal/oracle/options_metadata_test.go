@@ -55,7 +55,9 @@ func TestKnownLayoutOptionsParity(t *testing.T) {
 	}
 	got := make(map[string]*core.OptionData, len(registry.Options()))
 	for _, option := range registry.Options() {
-		got[option.ID] = option
+		if option.ID != "d2.rankGroups" { // Native Go extension.
+			got[option.ID] = option
+		}
 	}
 	if len(want) != len(got) {
 		t.Errorf("known option count = %d, want %d", len(got), len(want))

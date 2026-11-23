@@ -67,6 +67,24 @@ if err := elk.Layout(graph); err != nil {
 }
 ```
 
+### Same-rank groups
+
+The native Layered provider accepts `d2.rankGroups` on the root. Supply an
+array of groups of leaf node IDs or its JSON string encoding. For example,
+`"d2.rankGroups": [["commerce", "channel", "payments"]]` places all three
+centers on one horizontal line with `DOWN` or `UP`, or one vertical line
+with `RIGHT` or `LEFT`. Members can have different dimensions or parents.
+A directed edge can connect two members. Overlapping groups combine
+transitively. Empty groups, singleton groups and duplicate members add no
+rank constraint.
+
+Use `elk.hierarchyHandling: INCLUDE_CHILDREN` for cross-container edges.
+The constrained layout routes moved edges orthogonally and preserves fixed
+port attachments. A layer constraint on an expanded container holding a
+rank member produces a layout error. This option belongs to the Go port’s
+Layered provider. Other ELK algorithms and upstream elkjs have their own
+layout options.
+
 ## Compatibility testing
 
 Normal tests are pure Go:
