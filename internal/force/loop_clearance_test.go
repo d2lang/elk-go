@@ -18,7 +18,7 @@ func TestLoopClearanceRespectsFixedNodesAndAxes(t *testing.T) {
 	owner, b, obstacle, c := at(0), at(40), at(54), at(66)
 	owner.LoopPlan = &selfloops.Plan{Right: 40}
 	component := &FGraph{Nodes: []*FNode{owner, b, obstacle, c}, SpacingNodeNode: 2}
-	component.SeparateSelfLoopFootprints(func(n *FNode) bool { return n != owner && n != obstacle }, true, false)
+	component.SeparateOccupiedFootprints(func(n *FNode) bool { return n != owner && n != obstacle }, true, false)
 	if owner.Position.X != 0 || obstacle.Position.X != 54 || b.Position.X != 66 || c.Position.X != 78 {
 		t.Fatalf("positions after clearance: %v %v %v %v", owner.Position, b.Position, obstacle.Position, c.Position)
 	}

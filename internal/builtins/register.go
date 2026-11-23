@@ -35,8 +35,10 @@ func RegisterOptions(registry *core.OptionRegistry) {
 	spore.RegisterOptions(registry)
 	rectpacking.RegisterOptions(registry)
 	registerCompatibilityOptions(registry)
-	if err := registry.Register(core.OptionData{ID: selfloops.RouteOption, Kind: core.BooleanOption, Targets: core.Parents}); err != nil {
-		panic(err)
+	for _, id := range []string{selfloops.RouteOption, core.RouteCrossContainerEdges.ID} {
+		if err := registry.Register(core.OptionData{ID: id, Kind: core.BooleanOption, Targets: core.Parents}); err != nil {
+			panic(err)
+		}
 	}
 }
 

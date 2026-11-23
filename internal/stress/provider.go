@@ -51,7 +51,7 @@ func (*Provider) Layout(model *graph.Model, parent graph.NodeID, monitor core.Pr
 		majorization := &Majorization{}
 		majorization.Initialize(model, component)
 		majorization.Execute()
-		component.SeparateSelfLoopFootprints(func(node *force.FNode) bool {
+		component.SeparateOccupiedFootprints(func(node *force.FNode) bool {
 			return !graph.Get(&model.Node(node.Origin).Properties, Fixed)
 		}, majorization.dimension != DimensionY, majorization.dimension != DimensionX)
 		for _, label := range component.Labels {

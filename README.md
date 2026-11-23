@@ -81,6 +81,17 @@ distinct lanes for repeated loops, and explicit port attachments when
 provided. The returned node dimensions describe the original shape. Section
 coordinates follow the regular ELK edge coordinate options.
 
+### Cross-container edge routing
+
+Set `"elkgo.routeCrossContainerEdges": true` on the root graph to route
+connections across nesting levels in Force, Stress, Mr. Tree and Radial.
+For example, a connection from a sibling of a container to a port inside
+that container participates in placement at their common parent. The edge
+section reaches the original endpoint or port, in the configured edge
+coordinate system. Radial lays out disconnected trees separately and packs
+them together. Its existing restrictions on cycles in the local graph still
+apply. The option defaults to false for ELK.js compatibility.
+
 ## Compatibility testing
 
 Normal tests are pure Go:

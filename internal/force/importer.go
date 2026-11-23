@@ -100,6 +100,10 @@ func (importer *Importer) ImportGraph() (*FGraph, error) {
 			if !sourceFound || !targetFound || sourceID == targetID {
 				continue
 			}
+			if edge.PlacementProjection {
+				sourceNode.compoundEndpoint = true
+				targetNode.compoundEndpoint = true
+			}
 			fedge := &FEdge{
 				Origin:         edgeID,
 				Source:         sourceNode,

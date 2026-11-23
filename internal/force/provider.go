@@ -81,7 +81,7 @@ func layout(model *graph.Model, parent graph.NodeID, monitor core.ProgressMonito
 		}
 		selected.layout(component, monitor.Subtask(1/float64(len(components))))
 		component.ArrangeSelfLoops()
-		component.SeparateSelfLoopFootprints(nil, true, true)
+		component.SeparateOccupiedFootprints(nil, true, true)
 	}
 	return importer.applyLayout(Recombine(components), writeLoops)
 }

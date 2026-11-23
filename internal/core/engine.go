@@ -46,6 +46,9 @@ func (engine *Engine) Layout(model *graph.Model) error {
 	if err := engine.resolveAlgorithms(model); err != nil {
 		return err
 	}
+	if graph.Get(&model.Node(model.Root).Properties, RouteCrossContainerEdges) {
+		return engine.layoutCompoundEdges(model)
+	}
 	_, err := engine.layoutRecursively(model, model.Root, engine.Monitor)
 	return err
 }

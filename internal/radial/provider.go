@@ -55,6 +55,13 @@ func Register(registry *core.AlgorithmRegistry) error {
 }
 
 func (*Provider) Layout(model *graph.Model, parent graph.NodeID, monitor core.ProgressMonitor) error {
+	if trees, ok := graph.TryGet(&model.Node(parent).Properties, core.CrossContainerRadialTrees); ok {
+		return layoutForest(model, parent, trees, monitor)
+	}
+	return layoutTree(model, parent, monitor)
+}
+
+func layoutTree(model *graph.Model, parent graph.NodeID, monitor core.ProgressMonitor) error {
 	parentNode := model.Node(parent)
 	if !graph.Get(&parentNode.Properties, OmitNodeMicroLayout) {
 		nodespacing.CalculateLabelAndNodeSizes(model, parent, nil)
