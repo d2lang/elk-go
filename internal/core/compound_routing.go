@@ -14,6 +14,8 @@ import (
 	"github.com/d2lang/elk-go/internal/javacompat"
 )
 
+var compoundEdgeNodeSpacing = graph.PropertyWithDefault("org.eclipse.elk.spacing.edgeNode", func() float64 { return 16 })
+
 // Allocate attachment slots in input order. Opposite directions share the
 // same group; port identity is part of the key so each SQL row stays fixed.
 func routeCompoundEdges(model *graph.Model, edges []compoundEdge) error {
@@ -127,9 +129,14 @@ func routeCompoundEdge(model *graph.Model, edgeID graph.EdgeID, fraction float64
 	var blocked []geometry.Rectangle
 	// Prefer a little clearance from boxes. Tight or fixed layouts may
 	// have only a narrow corridor between two obstacles.
-	for _, clearance := range []float64{5, 0} {
-		starts := compoundAnchors(model, source, srcBox, branches[src], clearance, fraction)
-		ends := compoundAnchors(model, target, dstBox, branches[dst], clearance, fraction)
+	// A sufficiently long normal approach gives rounded bends and arrowheads
+	// room before the port. If the corridor is narrow, shorten the lead
+	// before giving up clearance from neighboring obstacles.
+	preferredLead := math.Max(5, graph.Get(&model.Node(container).Properties, compoundEdgeNodeSpacing))
+	for _, attempt := range [...]struct{ lead, clearance float64 }{{preferredLead, 5}, {5, 5}, {0, 0}} {
+		clearance := attempt.clearance
+		starts := compoundAnchors(model, source, srcBox, dstBox, branches[src], attempt.lead, fraction)
+		ends := compoundAnchors(model, target, dstBox, srcBox, branches[dst], attempt.lead, fraction)
 		// Keep strokes clear even when a candidate grazes an obstacle.
 		// Endpoint boxes themselves must remain accessible from their border.
 		blocked = make([]geometry.Rectangle, 0, len(obstacles)+len(parallelLabels)+2)
@@ -220,7 +227,7 @@ func compoundLabelPosition(path geometry.Chain, width, height float64, obstacles
 
 type compoundAnchor struct{ actual, point, lead geometry.Point }
 
-func compoundAnchors(model *graph.Model, shape graph.ShapeID, box geometry.Rectangle, inside bool, clearance, fraction float64) []compoundAnchor {
+func compoundAnchors(model *graph.Model, shape graph.ShapeID, box, other geometry.Rectangle, inside bool, lead, fraction float64) []compoundAnchor {
 	center := geometry.Point{X: box.X + fraction*box.Width, Y: box.Y + fraction*box.Height}
 	anchors := []geometry.Point{{X: box.X, Y: center.Y}, {X: box.MaxX(), Y: center.Y}, {X: center.X, Y: box.Y}, {X: center.X, Y: box.MaxY()}}
 	normals := [...]geometry.Point{{X: -1}, {X: 1}, {Y: -1}, {Y: 1}}
@@ -257,7 +264,7 @@ func compoundAnchors(model *graph.Model, shape graph.ShapeID, box geometry.Recta
 	// (or outside, for an edge pointing into its own container).
 	faces := [...]float64{box.X, box.MaxX(), box.Y, box.MaxY()}
 	if inside {
-		clearance = -clearance
+		lead = -lead
 	}
 	result := make([]compoundAnchor, 0, len(anchors))
 	for i, p := range anchors {
@@ -277,7 +284,19 @@ func compoundAnchors(model *graph.Model, shape graph.ShapeID, box geometry.Recta
 				at.Y = faces[i]
 			}
 		}
-		result = append(result, compoundAnchor{actual: p, point: at, lead: at.Add(normals[i].Scale(clearance))})
+		// If the two faces look into the same narrow gap, their leads
+		// meet halfway. Crossing the leads would force a detour just
+		// to turn around and enter the target from the correct side.
+		length := lead
+		if !inside {
+			gaps := [...]float64{at.X - other.MaxX(), other.X - at.X, at.Y - other.MaxY(), other.Y - at.Y}
+			horizontal := normals[i].X != 0
+			faceToFace := horizontal && box.Y < other.MaxY() && other.Y < box.MaxY() || !horizontal && box.X < other.MaxX() && other.X < box.MaxX()
+			if faceToFace && gaps[i] > 0 {
+				length = math.Min(length, gaps[i]/2)
+			}
+		}
+		result = append(result, compoundAnchor{actual: p, point: at, lead: at.Add(normals[i].Scale(length))})
 	}
 	return result
 }
@@ -320,8 +339,8 @@ func compoundPath(starts, ends []compoundAnchor, obstacles []geometry.Rectangle,
 }
 
 // Search the horizontal and vertical lines through the ports and obstacle
-// margins. The incoming axis is part of the Dijkstra state, so bending costs
-// more than continuing straight. Cells and predecessors are stored on demand.
+// margins. The incoming direction is part of the Dijkstra state so bends cost
+// more and neither terminal segment can double back. Store cells on demand.
 func compoundGrid(starts, ends []compoundAnchor, obstacles []geometry.Rectangle, bounds geometry.Rectangle, clearance float64) geometry.Chain {
 	inBounds := func(p geometry.Point) bool {
 		return p.X >= bounds.X && p.X <= bounds.MaxX() && p.Y >= bounds.Y && p.Y <= bounds.MaxY()
@@ -360,9 +379,10 @@ func compoundGrid(starts, ends []compoundAnchor, obstacles []geometry.Rectangle,
 		return cell{x, y}
 	}
 	point := func(c cell) geometry.Point { return geometry.Point{X: xs[c.x], Y: ys[c.y]} }
+	direction := func(a, b geometry.Point) cell { return cell{cmp.Compare(b.X, a.X), cmp.Compare(b.Y, a.Y)} }
 	type state struct {
 		cell
-		vertical bool
+		heading cell
 	}
 	type entry struct {
 		state
@@ -385,7 +405,7 @@ func compoundGrid(starts, ends []compoundAnchor, obstacles []geometry.Rectangle,
 		if !inBounds(start.lead) || !clear(start.point, start.lead) {
 			continue
 		}
-		s := state{at(start.lead), start.point.X == start.lead.X}
+		s := state{at(start.lead), direction(start.point, start.lead)}
 		distance[s] = 0
 		startAt[s] = start.point
 		q.Add(entry{s, 0})
@@ -397,7 +417,9 @@ func compoundGrid(starts, ends []compoundAnchor, obstacles []geometry.Rectangle,
 			continue
 		}
 		p := point(item.cell)
-		if end, ok := endAt[item.cell]; ok {
+		// Approaching a port from the back produces a reversed final segment.
+		reverse := cell{-item.heading.x, -item.heading.y}
+		if end, ok := endAt[item.cell]; ok && (reverse == (cell{}) || direction(end.lead, end.point) != reverse) {
 			path := geometry.Chain{end.point, p}
 			current := item.state
 			for {
@@ -416,6 +438,9 @@ func compoundGrid(starts, ends []compoundAnchor, obstacles []geometry.Rectangle,
 			}
 		}
 		for _, move := range [...]cell{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+			if move == reverse {
+				continue
+			}
 			next := cell{item.x + move.x, item.y + move.y}
 			if next.x < 0 || next.x >= len(xs) || next.y < 0 || next.y >= len(ys) {
 				continue
@@ -424,9 +449,9 @@ func compoundGrid(starts, ends []compoundAnchor, obstacles []geometry.Rectangle,
 			if !clear(p, np) {
 				continue
 			}
-			s := state{next, move.x == 0}
+			s := state{next, move}
 			cost := item.cost + math.Abs(p.X-np.X) + math.Abs(p.Y-np.Y)
-			if s.vertical != item.vertical {
+			if item.heading != (cell{}) && move != item.heading {
 				cost += 5
 			}
 			if d, ok := distance[s]; ok && d <= cost {
@@ -441,22 +466,27 @@ func compoundGrid(starts, ends []compoundAnchor, obstacles []geometry.Rectangle,
 }
 
 func compactCompoundPath(points geometry.Chain) geometry.Chain {
+	// Radial placement can leave two aligned rows a few ULPs apart. A
+	// subpixel jog between them otherwise becomes a fake rounded corner.
+	// Remove only intermediate points; preserve the exact port anchors.
+	const epsilon = 1e-9
+	onAxis := func(a, b, c float64) bool { return math.Abs(a-b) <= epsilon && math.Abs(b-c) <= epsilon }
+	between := func(a, b, c float64) bool { return b >= math.Min(a, c)-epsilon && b <= math.Max(a, c)+epsilon }
 	out := points[:0]
 	for _, p := range points {
-		n := len(out)
-		if n > 0 && out[n-1] == p {
-			continue
-		}
-		if n >= 2 {
+		for len(out) >= 2 {
+			n := len(out)
 			a, b := out[n-2], out[n-1]
-			vertical := a.X == b.X && b.X == p.X && (b.Y-a.Y)*(p.Y-b.Y) >= 0
-			horizontal := a.Y == b.Y && b.Y == p.Y && (b.X-a.X)*(p.X-b.X) >= 0
-			if vertical || horizontal {
-				out[n-1] = p
-				continue
+			vertical := onAxis(a.X, b.X, p.X) && between(a.Y, b.Y, p.Y)
+			horizontal := onAxis(a.Y, b.Y, p.Y) && between(a.X, b.X, p.X)
+			if !vertical && !horizontal {
+				break
 			}
+			out = out[:n-1]
 		}
-		out = append(out, p)
+		if len(out) == 0 || out[len(out)-1] != p {
+			out = append(out, p)
+		}
 	}
 	return out
 }
