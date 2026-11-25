@@ -9,8 +9,6 @@
 package layered
 
 import (
-	"time"
-
 	"github.com/d2lang/elk-go/internal/core"
 	basegraph "github.com/d2lang/elk-go/internal/graph"
 	"github.com/d2lang/elk-go/internal/javacompat"
@@ -32,7 +30,7 @@ func ConfigureGraphProperties(arena *LGraphArena, graphID LGraphID) {
 	}
 	seed := basegraph.Get(&graph.Properties, RandomSeed)
 	if seed == 0 {
-		basegraph.Set(&graph.Properties, Random, javacompat.NewRandom(time.Now().UnixNano()))
+		basegraph.Set(&graph.Properties, Random, javacompat.NewRandom(1))
 	} else {
 		basegraph.Set(&graph.Properties, Random, javacompat.NewRandom(int64(seed)))
 	}

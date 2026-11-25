@@ -12,13 +12,13 @@ package spore
 import (
 	"fmt"
 	"math"
-	"math/rand"
 
 	"github.com/d2lang/elk-go/internal/common/elkutil"
 	"github.com/d2lang/elk-go/internal/common/nodespacing"
 	"github.com/d2lang/elk-go/internal/core"
 	"github.com/d2lang/elk-go/internal/geometry"
 	"github.com/d2lang/elk-go/internal/graph"
+	"github.com/d2lang/elk-go/internal/javacompat"
 )
 
 type importer struct {
@@ -44,13 +44,14 @@ func (i *importer) importGraph() (*sporeGraph, error) {
 	}
 	i.graph = g
 
+	jitter := javacompat.NewRandom(1)
 	for _, nodeID := range parentNode.Children {
 		elkNode := i.model.Node(nodeID)
 		halfWidth, halfHeight := elkNode.Shape.Width/2, elkNode.Shape.Height/2
 		point := geometry.Point{X: elkNode.Shape.X + halfWidth, Y: elkNode.Shape.Y + halfHeight}
 		for i.containsPoint(point) {
-			point.X += (rand.Float64() - 0.5) * 0.001
-			point.Y += (rand.Float64() - 0.5) * 0.001
+			point.X += (jitter.NextDouble() - 0.5) * 0.001
+			point.Y += (jitter.NextDouble() - 0.5) * 0.001
 		}
 		original := &vertex{point: point}
 		margin := graph.Get(&elkNode.Properties, nodespacing.Margins)

@@ -12,7 +12,6 @@ package force
 import (
 	"fmt"
 	"math"
-	"time"
 
 	"github.com/d2lang/elk-go/internal/common/nodespacing"
 	"github.com/d2lang/elk-go/internal/core"
@@ -50,9 +49,7 @@ func (importer *Importer) ImportGraph() (*FGraph, error) {
 	}
 	seed := graph.Get(&parent.Properties, RandomSeed)
 	if seed == 0 {
-		// Java's new Random() is intentionally nondeterministic for seed zero.
-		// The precise seed-uniquifier value is not stable across JVMs either.
-		fgraph.Random = javacompat.NewRandom(time.Now().UnixNano())
+		fgraph.Random = javacompat.NewRandom(1)
 	} else {
 		fgraph.Random = javacompat.NewRandom(int64(seed))
 	}

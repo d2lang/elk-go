@@ -13,8 +13,6 @@ package random
 import (
 	"fmt"
 	"math"
-	"sync/atomic"
-	"time"
 
 	"github.com/d2lang/elk-go/internal/basicoptions"
 	"github.com/d2lang/elk-go/internal/common/elkutil"
@@ -28,12 +26,6 @@ const (
 	maxBends = int32(5)
 	randFact = float64(float32(0.2))
 )
-
-var seedUniquifier atomic.Int64
-
-func init() {
-	seedUniquifier.Store(8682522807148012)
-}
 
 type Provider struct{}
 
@@ -57,7 +49,7 @@ func (*Provider) Layout(model *graph.Model, parent graph.NodeID, _ core.Progress
 	}
 	seed := int64(graph.Get(&parentNode.Properties, basicoptions.RandomSeed))
 	if seed == 0 {
-		seed = defaultSeed()
+		seed = 1
 	}
 	rng := javacompat.NewRandom(seed)
 	// RandomLayoutProvider explicitly narrows both values through floatValue().
@@ -65,16 +57,6 @@ func (*Provider) Layout(model *graph.Model, parent graph.NodeID, _ core.Progress
 	spacing := float64(float32(graph.Get(&parentNode.Properties, basicoptions.RandomSpacingNodeNode)))
 	padding := graph.Get(&parentNode.Properties, basicoptions.RandomPadding)
 	return randomize(model, parent, rng, aspectRatio, spacing, padding)
-}
-
-func defaultSeed() int64 {
-	for {
-		current := seedUniquifier.Load()
-		next := current * 181783497276652981
-		if seedUniquifier.CompareAndSwap(current, next) {
-			return next ^ time.Now().UnixNano()
-		}
-	}
 }
 
 func randomize(model *graph.Model, parent graph.NodeID, rng *javacompat.Random, aspectRatio, spacing float64, padding geometry.Spacing) error {
