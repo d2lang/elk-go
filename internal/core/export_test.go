@@ -8,6 +8,8 @@
 
 package core
 
+import "github.com/d2lang/elk-go/internal/graph"
+
 // BySuffixScan exposes the reference implementation of BySuffix to the
 // external tests of this package.
 func (registry *OptionRegistry) BySuffixScan(suffix string) *OptionData {
@@ -47,3 +49,9 @@ func (registry *OptionRegistry) bySuffixScan(suffix string) *OptionData {
 	}
 	return match
 }
+
+// PureParse and RegisteredKey expose what Register records about an option
+// besides its exported fields.
+func (option *OptionData) PureParse() bool { return option.pureParse }
+
+func (option *OptionData) RegisteredKey() graph.PropertyKey { return option.key }
