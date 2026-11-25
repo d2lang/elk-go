@@ -56,10 +56,16 @@ func CloneablePropertyWithDefault[T any](id string, defaultValue func() T) Prope
 // computed and boxed once; Get materialises that box, which is the same as
 // storing a fresh box of an equal value, and returns the same value Default
 // would.
+//
+// The box is the value itself, not cloneValue of it: cloneValue returns such a
+// value as it is (it only copies a value with a Clone method, a []int or a
+// []float64, none of which may be used here), and asking whether a value has
+// a Clone method is something TinyGo cannot do while it evaluates package
+// initialisers at compile time (see InternPropertyKey).
 func CloneablePropertyWithConstantDefault[T any](id string, defaultValue func() T) Property[T] {
 	property := CloneablePropertyWithDefault(id, defaultValue)
 	value := defaultValue()
-	property.constant = &constantDefault[T]{value: value, box: cloneValue(any(value))}
+	property.constant = &constantDefault[T]{value: value, box: any(value)}
 	return property
 }
 
@@ -85,6 +91,17 @@ var propertyKeys struct {
 
 // InternPropertyKey returns id's key, assigning a new one on first use.
 // Key 0 is never assigned.
+//
+// Every property declared in a package-level variable interns its ID while
+// its package initialises. TinyGo evaluates package initialisers when it
+// compiles, as far as it can, and what it evaluates costs no code and no
+// start-up time: the declared properties, the keys and this table become
+// constant data, and a property passed to Get or Set is then a handful of
+// constants instead of a value loaded from memory field by field (171 KB of
+// D2's 16.3 MB WebAssembly module when this was measured). It gives up on a
+// function that defers as soon as that function touches memory it must leave
+// for run time, so nothing on this path may defer; nothing between Lock and
+// Unlock can panic.
 func InternPropertyKey(id string) PropertyKey {
 	propertyKeys.RLock()
 	key, found := propertyKeys.byID[id]
@@ -93,17 +110,17 @@ func InternPropertyKey(id string) PropertyKey {
 		return key
 	}
 	propertyKeys.Lock()
-	defer propertyKeys.Unlock()
-	if key, found := propertyKeys.byID[id]; found {
-		return key
+	key, found = propertyKeys.byID[id]
+	if !found {
+		if propertyKeys.byID == nil {
+			propertyKeys.byID = make(map[string]PropertyKey)
+			propertyKeys.names = []string{""}
+		}
+		key = PropertyKey(len(propertyKeys.names))
+		propertyKeys.names = append(propertyKeys.names, id)
+		propertyKeys.byID[id] = key
 	}
-	if propertyKeys.byID == nil {
-		propertyKeys.byID = make(map[string]PropertyKey)
-		propertyKeys.names = []string{""}
-	}
-	key = PropertyKey(len(propertyKeys.names))
-	propertyKeys.names = append(propertyKeys.names, id)
-	propertyKeys.byID[id] = key
+	propertyKeys.Unlock()
 	return key
 }
 
