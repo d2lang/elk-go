@@ -112,7 +112,8 @@ than one distinct upstream notice:
 | `internal/box/provider.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/BoxLayoutProvider.java` and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/Core.melk` |
 | `internal/fixed/provider.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/FixedLayoutProvider.java` and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/Core.melk` |
 | `internal/random/provider.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/RandomLayoutProvider.java` and `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/Core.melk` |
-| `internal/builtins/frozen_options.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/IndividualSpacings.java` for `parseIndividualSpacings`; the remaining compatibility metadata is transcribed from `knownLayoutOptions()` output of the pinned ELK.js asset rather than from an additional implementation source file |
+| `internal/builtins/frozen_options.go` | Compatibility metadata transcribed from `knownLayoutOptions()` output of the pinned ELK.js asset rather than from an implementation source file |
+| `internal/core/option_spec.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/util/IndividualSpacings.java` for `parseIndividualSpacings` |
 | `internal/core/codec.go` | `plugins/org.eclipse.elk.graph.json/src/org/eclipse/elk/graph/json/JsonImporter.xtend` and `JsonExporter.xtend` |
 | `internal/core/jsoncodec.go` | `plugins/org.eclipse.elk.graph.json/src/org/eclipse/elk/graph/json/JsonImporter.xtend` and `JsonExporter.xtend` |
 | `internal/core/engine.go` | `plugins/org.eclipse.elk.core/src/org/eclipse/elk/core/RecursiveGraphLayoutEngine.java` and `data/LayoutAlgorithmResolver.java` |

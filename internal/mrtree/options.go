@@ -37,6 +37,24 @@ var (
 	NodeSizeFixedGraphSize      = graph.PropertyWithDefault("org.eclipse.elk.nodeSize.fixedGraphSize", func() bool { return false })
 )
 
+// optionSpecs declares the options RegisterOptions registers.
+var optionSpecs = [...]core.OptionSpec{
+	{ID: NodeSizeFixedGraphSize.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: AspectRatio.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: Priority.ID, Kind: core.IntegerOption, Targets: core.Nodes | core.Edges},
+	{ID: SeparateConnectedComponents.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: OmitNodeMicroLayout.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: Weighting.ID, Kind: core.EnumOption, Targets: core.Parents,
+		EnumValues: "MODEL_ORDER DESCENDANTS FAN CONSTRAINT"},
+	{ID: SearchOrder.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: "DFS BFS"},
+	{ID: PositionConstraint.ID, Kind: core.IntegerOption, Targets: core.Nodes},
+	{ID: EdgeRoutingMode.ID, Kind: core.EnumOption, Targets: core.Parents,
+		EnumValues: "NONE MIDDLE_TO_MIDDLE AVOID_OVERLAP"},
+	{ID: TreeLevel.ID, Kind: core.IntegerOption, Targets: core.Nodes},
+	{ID: Compaction.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: EdgeEndTextureLength.ID, Kind: core.DoubleOption, Targets: core.Parents},
+}
+
 // RegisterOptions installs the metadata generated from Tree.melk in ELK
 // 0.12.0. Re-exported core options are deliberately registered only when the
 // shared registry does not already contain their identifier.
@@ -44,28 +62,7 @@ func RegisterOptions(registry *core.OptionRegistry) {
 	if registry == nil {
 		return
 	}
-	options := []core.OptionData{
-		{ID: NodeSizeFixedGraphSize.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: AspectRatio.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: Priority.ID, Kind: core.IntegerOption, Targets: core.Nodes | core.Edges},
-		{ID: SeparateConnectedComponents.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: OmitNodeMicroLayout.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: Weighting.ID, Kind: core.EnumOption, Targets: core.Parents,
-			EnumValues: []string{"MODEL_ORDER", "DESCENDANTS", "FAN", "CONSTRAINT"}},
-		{ID: SearchOrder.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{"DFS", "BFS"}},
-		{ID: PositionConstraint.ID, Kind: core.IntegerOption, Targets: core.Nodes},
-		{ID: EdgeRoutingMode.ID, Kind: core.EnumOption, Targets: core.Parents,
-			EnumValues: []string{"NONE", "MIDDLE_TO_MIDDLE", "AVOID_OVERLAP"}},
-		{ID: TreeLevel.ID, Kind: core.IntegerOption, Targets: core.Nodes},
-		{ID: Compaction.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: EdgeEndTextureLength.ID, Kind: core.DoubleOption, Targets: core.Parents},
-	}
-	for _, option := range options {
-		if registry.ByID(option.ID) != nil {
-			continue
-		}
-		if err := registry.Register(option); err != nil {
-			panic(err)
-		}
+	for index := range optionSpecs {
+		registry.RegisterMissing(optionSpecs[index])
 	}
 }

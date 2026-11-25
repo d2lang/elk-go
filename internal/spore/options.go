@@ -52,31 +52,28 @@ var (
 	DebugMode                 = graph.PropertyWithDefault("org.eclipse.elk.debugMode", func() bool { return false })
 )
 
+// optionSpecs declares the options RegisterOptions registers.
+var optionSpecs = [...]core.OptionSpec{
+	{ID: UnderlyingLayoutAlgorithm.ID, Kind: core.StringOption, Targets: core.Parents},
+	{ID: StructureExtraction.ID, Group: "structure", Kind: core.EnumOption, Targets: core.Parents, EnumValues: StructureDelaunay},
+	{ID: TreeConstruction.ID, Group: "processingOrder", Kind: core.EnumOption, Targets: core.Parents, EnumValues: TreeMinimum + " " + TreeMaximum},
+	{ID: SpanningTreeCost.ID, Group: "processingOrder", Kind: core.EnumOption, Targets: core.Parents, EnumValues: CostCenterDistance + " " + CostCircleUnderlap + " " + CostRectangleUnderlap + " " + CostInvertedOverlap + " " + CostMinimumRootDistance},
+	{ID: PreferredRoot.ID, Group: "processingOrder", Kind: core.StringOption, Targets: core.Parents},
+	{ID: RootSelection.ID, Group: "processingOrder", Kind: core.EnumOption, Targets: core.Parents, EnumValues: RootFixed + " " + RootCenter},
+	{ID: Compaction.ID, Group: "compaction", Kind: core.EnumOption, Targets: core.Parents, EnumValues: CompactionDepthFirst},
+	{ID: Orthogonal.ID, Group: "compaction", Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: MaxIterations.ID, Group: "overlapRemoval", Kind: core.IntegerOption, Targets: core.Parents},
+	{ID: RunScanline.ID, Group: "overlapRemoval", Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: DebugMode.ID, Kind: core.BooleanOption, Targets: core.Parents},
+}
+
 // RegisterOptions installs the metadata generated from SPOrE.melk in ELK
 // 0.8.1. Shared core options are registered only when absent.
 func RegisterOptions(registry *core.OptionRegistry) {
 	if registry == nil {
 		return
 	}
-	options := []core.OptionData{
-		{ID: UnderlyingLayoutAlgorithm.ID, Kind: core.StringOption, Targets: core.Parents},
-		{ID: StructureExtraction.ID, Group: "structure", Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{StructureDelaunay}},
-		{ID: TreeConstruction.ID, Group: "processingOrder", Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{TreeMinimum, TreeMaximum}},
-		{ID: SpanningTreeCost.ID, Group: "processingOrder", Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{CostCenterDistance, CostCircleUnderlap, CostRectangleUnderlap, CostInvertedOverlap, CostMinimumRootDistance}},
-		{ID: PreferredRoot.ID, Group: "processingOrder", Kind: core.StringOption, Targets: core.Parents},
-		{ID: RootSelection.ID, Group: "processingOrder", Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{RootFixed, RootCenter}},
-		{ID: Compaction.ID, Group: "compaction", Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{CompactionDepthFirst}},
-		{ID: Orthogonal.ID, Group: "compaction", Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: MaxIterations.ID, Group: "overlapRemoval", Kind: core.IntegerOption, Targets: core.Parents},
-		{ID: RunScanline.ID, Group: "overlapRemoval", Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: DebugMode.ID, Kind: core.BooleanOption, Targets: core.Parents},
-	}
-	for _, option := range options {
-		if registry.ByID(option.ID) != nil {
-			continue
-		}
-		if err := registry.Register(option); err != nil {
-			panic(err)
-		}
+	for index := range optionSpecs {
+		registry.RegisterMissing(optionSpecs[index])
 	}
 }

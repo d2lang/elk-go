@@ -38,34 +38,31 @@ var (
 		"org.eclipse.elk.radial.rotation.outgoingEdgeAngles", func() bool { return false })
 )
 
+// optionSpecs declares the options RegisterOptions registers.
+var optionSpecs = [...]core.OptionSpec{
+	{ID: Position.ID, Kind: core.ObjectOption, Targets: core.Nodes | core.Ports | core.Labels, Parse: core.PointParser},
+	{ID: OmitNodeMicroLayout.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: OrderID.ID, Kind: core.IntegerOption, Targets: core.Nodes},
+	{ID: Radius.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: Compactor.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: "NONE RADIAL_COMPACTION WEDGE_COMPACTION"},
+	{ID: CompactionStepSize.ID, Kind: core.IntegerOption, Targets: core.Parents},
+	{ID: Sorter.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: "NONE POLAR_COORDINATE ID"},
+	{ID: WedgeCriteria.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: "LEAF_NUMBER NODE_SIZE"},
+	{ID: OptimizationCriteria.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: "NONE EDGE_LENGTH EDGE_LENGTH_BY_POSITION CROSSING_MINIMIZATION_BY_POSITION"},
+	{ID: CenterOnRoot.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: Rotate.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: RotationTargetAngle.ID, Group: "rotation", Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: RotationComputeAdditionalWedgeSpace.ID, Group: "rotation", Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: RotationOutgoingEdgeAngles.ID, Group: "rotation", Kind: core.BooleanOption, Targets: core.Parents},
+}
+
 // RegisterOptions installs the metadata generated from Radial.melk in ELK
 // 0.12.0.
 func RegisterOptions(registry *core.OptionRegistry) {
 	if registry == nil {
 		return
 	}
-	options := []core.OptionData{
-		{ID: Position.ID, Kind: core.ObjectOption, Targets: core.Nodes | core.Ports | core.Labels, Parse: func(value string) (any, error) { return geometry.ParsePoint(value) }},
-		{ID: OmitNodeMicroLayout.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: OrderID.ID, Kind: core.IntegerOption, Targets: core.Nodes},
-		{ID: Radius.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: Compactor.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{"NONE", "RADIAL_COMPACTION", "WEDGE_COMPACTION"}},
-		{ID: CompactionStepSize.ID, Kind: core.IntegerOption, Targets: core.Parents},
-		{ID: Sorter.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{"NONE", "POLAR_COORDINATE", "ID"}},
-		{ID: WedgeCriteria.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{"LEAF_NUMBER", "NODE_SIZE"}},
-		{ID: OptimizationCriteria.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{"NONE", "EDGE_LENGTH", "EDGE_LENGTH_BY_POSITION", "CROSSING_MINIMIZATION_BY_POSITION"}},
-		{ID: CenterOnRoot.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: Rotate.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: RotationTargetAngle.ID, Group: "rotation", Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: RotationComputeAdditionalWedgeSpace.ID, Group: "rotation", Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: RotationOutgoingEdgeAngles.ID, Group: "rotation", Kind: core.BooleanOption, Targets: core.Parents},
-	}
-	for _, option := range options {
-		if registry.ByID(option.ID) != nil {
-			continue
-		}
-		if err := registry.Register(option); err != nil {
-			panic(err)
-		}
+	for index := range optionSpecs {
+		registry.RegisterMissing(optionSpecs[index])
 	}
 }

@@ -44,30 +44,28 @@ var (
 	})
 )
 
+// optionSpecs declares the options RegisterOptions registers.
+var optionSpecs = [...]core.OptionSpec{
+	{ID: Model.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: ModelEades + " " + ModelFruchtermanReingold},
+	{ID: Iterations.ID, Kind: core.IntegerOption, Targets: core.Parents},
+	{ID: RepulsivePower.ID, Kind: core.IntegerOption, Targets: core.Edges},
+	{ID: Temperature.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: Repulsion.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: Priority.ID, Kind: core.IntegerOption, Targets: core.Nodes | core.Edges},
+	{ID: SpacingNodeNode.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: SpacingEdgeLabel.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: AspectRatio.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: RandomSeed.ID, Kind: core.IntegerOption, Targets: core.Parents},
+	{ID: SeparateConnectedComponents.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: Interactive.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: OmitNodeMicroLayout.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: NodeSizeFixedGraphSize.ID, Kind: core.BooleanOption, Targets: core.Parents},
+}
+
 // RegisterOptions adds the ForceOptions metadata supported by ELK 0.12.0.
 // Shared core options may already be present, so registration is idempotent.
 func RegisterOptions(registry *core.OptionRegistry) {
-	options := []core.OptionData{
-		{ID: Model.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{ModelEades, ModelFruchtermanReingold}},
-		{ID: Iterations.ID, Kind: core.IntegerOption, Targets: core.Parents},
-		{ID: RepulsivePower.ID, Kind: core.IntegerOption, Targets: core.Edges},
-		{ID: Temperature.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: Repulsion.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: Priority.ID, Kind: core.IntegerOption, Targets: core.Nodes | core.Edges},
-		{ID: SpacingNodeNode.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: SpacingEdgeLabel.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: AspectRatio.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: RandomSeed.ID, Kind: core.IntegerOption, Targets: core.Parents},
-		{ID: SeparateConnectedComponents.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: Interactive.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: OmitNodeMicroLayout.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: NodeSizeFixedGraphSize.ID, Kind: core.BooleanOption, Targets: core.Parents},
-	}
-	for _, option := range options {
-		if registry.ByID(option.ID) == nil {
-			if err := registry.Register(option); err != nil {
-				panic(err)
-			}
-		}
+	for index := range optionSpecs {
+		registry.RegisterMissing(optionSpecs[index])
 	}
 }

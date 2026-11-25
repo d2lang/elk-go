@@ -31,19 +31,17 @@ var (
 	IterationLimit    = graph.PropertyWithDefault("org.eclipse.elk.stress.iterationLimit", func() int { return math.MaxInt32 })
 )
 
+// optionSpecs declares the options RegisterOptions registers.
+var optionSpecs = [...]core.OptionSpec{
+	{ID: Fixed.ID, Kind: core.BooleanOption, Targets: core.Nodes},
+	{ID: DesiredEdgeLength.ID, Kind: core.DoubleOption, Targets: core.Parents | core.Edges},
+	{ID: Dimension.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: DimensionXY + " " + DimensionX + " " + DimensionY},
+	{ID: Epsilon.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: IterationLimit.ID, Kind: core.IntegerOption, Targets: core.Parents},
+}
+
 func RegisterOptions(registry *core.OptionRegistry) {
-	options := []core.OptionData{
-		{ID: Fixed.ID, Kind: core.BooleanOption, Targets: core.Nodes},
-		{ID: DesiredEdgeLength.ID, Kind: core.DoubleOption, Targets: core.Parents | core.Edges},
-		{ID: Dimension.ID, Kind: core.EnumOption, Targets: core.Parents, EnumValues: []string{DimensionXY, DimensionX, DimensionY}},
-		{ID: Epsilon.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: IterationLimit.ID, Kind: core.IntegerOption, Targets: core.Parents},
-	}
-	for _, option := range options {
-		if registry.ByID(option.ID) == nil {
-			if err := registry.Register(option); err != nil {
-				panic(err)
-			}
-		}
+	for index := range optionSpecs {
+		registry.RegisterMissing(optionSpecs[index])
 	}
 }

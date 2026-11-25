@@ -296,6 +296,15 @@ func (registry *OptionRegistry) Register(option OptionData) error {
 	if _, exists := registry.byID[option.ID]; exists {
 		return fmt.Errorf("layout option %q is already registered", option.ID)
 	}
+	option.LegacyIDs = append([]string(nil), option.LegacyIDs...)
+	option.EnumValues = append([]string(nil), option.EnumValues...)
+	registry.register(option)
+	return nil
+}
+
+// register is Register for an option that is valid and whose LegacyIDs and
+// EnumValues nothing else refers to.
+func (registry *OptionRegistry) register(option OptionData) {
 	// The registered copy lives in a block of copies that never moves (it
 	// is referred to by pointer): one allocation per block, not per option.
 	if len(registry.store) == cap(registry.store) {
@@ -303,8 +312,6 @@ func (registry *OptionRegistry) Register(option OptionData) error {
 	}
 	registry.store = append(registry.store, option)
 	copyOfOption := &registry.store[len(registry.store)-1]
-	copyOfOption.LegacyIDs = append([]string(nil), option.LegacyIDs...)
-	copyOfOption.EnumValues = append([]string(nil), option.EnumValues...)
 	copyOfOption.boxedEnumValues = nil
 	if len(copyOfOption.EnumValues) > 0 {
 		copyOfOption.boxedEnumValues = make([]any, len(copyOfOption.EnumValues))
@@ -328,7 +335,6 @@ func (registry *OptionRegistry) Register(option OptionData) error {
 	for _, legacy := range pointer.LegacyIDs {
 		registry.list(registry.legacyHeads, legacy, pointer)
 	}
-	return nil
 }
 
 // list adds id, an ID or legacy ID of option, to the entries of its last

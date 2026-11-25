@@ -36,3 +36,22 @@ func TestIndividualSpacingOptionParsesNestedOverrides(t *testing.T) {
 		t.Fatalf("nodeNode override = %#v, found %v", value, found)
 	}
 }
+
+// TestCompatibilityCorrectionsListEachOptionOnce checks that no option is
+// listed twice in a table of corrections: the later entry would silently win.
+func TestCompatibilityCorrectionsListEachOptionOnce(t *testing.T) {
+	seen := map[string]bool{}
+	for _, correction := range compatibilityGroups {
+		if seen[correction.id] {
+			t.Errorf("compatibilityGroups lists %q twice", correction.id)
+		}
+		seen[correction.id] = true
+	}
+	seen = map[string]bool{}
+	for _, correction := range compatibilityTargets {
+		if seen[correction.id] {
+			t.Errorf("compatibilityTargets lists %q twice", correction.id)
+		}
+		seen[correction.id] = true
+	}
+}

@@ -55,6 +55,26 @@ var (
 	RandomSeed            = graph.PropertyWithDefault("org.eclipse.elk.randomSeed", func() int { return 0 })
 )
 
+// optionSpecs declares the options RegisterOptions registers.
+var optionSpecs = [...]core.OptionSpec{
+	{ID: Position.ID, Kind: core.ObjectOption, Targets: core.Nodes | core.Ports | core.Labels,
+		Parse: core.PointParser},
+	{ID: BendPoints.ID, Kind: core.ObjectOption, Targets: core.Edges,
+		Parse: core.ChainParser},
+	{ID: EdgeRouting.ID, Kind: core.EnumOption, Targets: core.Parents,
+		EnumValues: "UNDEFINED POLYLINE ORTHOGONAL SPLINES"},
+	{ID: NodeSizeFixedGraphSize.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: NodeSizeOptions.ID, Kind: core.EnumSetOption, Targets: core.Nodes,
+		EnumValues: "DEFAULT_MINIMUM_SIZE MINIMUM_SIZE_ACCOUNTS_FOR_PADDING COMPUTE_PADDING OUTSIDE_NODE_LABELS_OVERHANG PORTS_OVERHANG UNIFORM_PORT_SPACING SPACE_EFFICIENT_PORT_LABELS FORCE_TABULAR_NODE_LABELS ASYMMETRICAL"},
+	{ID: ExpandNodes.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: Interactive.ID, Kind: core.BooleanOption, Targets: core.Parents},
+	{ID: Priority.ID, Kind: core.IntegerOption, Targets: core.Nodes | core.Edges},
+	{ID: PackingMode.ID, Kind: core.EnumOption, Targets: core.Parents,
+		EnumValues: "SIMPLE GROUP_DEC GROUP_MIXED GROUP_INC"},
+	{ID: BoxAspectRatio.ID, Kind: core.DoubleOption, Targets: core.Parents},
+	{ID: RandomSeed.ID, Kind: core.IntegerOption, Targets: core.Parents},
+}
+
 // RegisterOptions adds the metadata consumed by the three utility providers.
 // Core and Layered may already have registered shared identifiers, so this is
 // deliberately idempotent by canonical option ID.
@@ -62,30 +82,7 @@ func RegisterOptions(registry *core.OptionRegistry) {
 	if registry == nil {
 		return
 	}
-	options := []core.OptionData{
-		{ID: Position.ID, Kind: core.ObjectOption, Targets: core.Nodes | core.Ports | core.Labels,
-			Parse: func(value string) (any, error) { return geometry.ParsePoint(value) }},
-		{ID: BendPoints.ID, Kind: core.ObjectOption, Targets: core.Edges,
-			Parse: func(value string) (any, error) { return geometry.ParseChain(value) }},
-		{ID: EdgeRouting.ID, Kind: core.EnumOption, Targets: core.Parents,
-			EnumValues: []string{"UNDEFINED", "POLYLINE", "ORTHOGONAL", "SPLINES"}},
-		{ID: NodeSizeFixedGraphSize.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: NodeSizeOptions.ID, Kind: core.EnumSetOption, Targets: core.Nodes,
-			EnumValues: []string{"DEFAULT_MINIMUM_SIZE", "MINIMUM_SIZE_ACCOUNTS_FOR_PADDING", "COMPUTE_PADDING", "OUTSIDE_NODE_LABELS_OVERHANG", "PORTS_OVERHANG", "UNIFORM_PORT_SPACING", "SPACE_EFFICIENT_PORT_LABELS", "FORCE_TABULAR_NODE_LABELS", "ASYMMETRICAL"}},
-		{ID: ExpandNodes.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: Interactive.ID, Kind: core.BooleanOption, Targets: core.Parents},
-		{ID: Priority.ID, Kind: core.IntegerOption, Targets: core.Nodes | core.Edges},
-		{ID: PackingMode.ID, Kind: core.EnumOption, Targets: core.Parents,
-			EnumValues: []string{"SIMPLE", "GROUP_DEC", "GROUP_MIXED", "GROUP_INC"}},
-		{ID: BoxAspectRatio.ID, Kind: core.DoubleOption, Targets: core.Parents},
-		{ID: RandomSeed.ID, Kind: core.IntegerOption, Targets: core.Parents},
-	}
-	for _, option := range options {
-		if registry.ByID(option.ID) != nil {
-			continue
-		}
-		if err := registry.Register(option); err != nil {
-			panic(err)
-		}
+	for index := range optionSpecs {
+		registry.RegisterMissing(optionSpecs[index])
 	}
 }
